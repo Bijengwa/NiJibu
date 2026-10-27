@@ -53,14 +53,17 @@ export default function MainTabs() {
   };
 
   const Inner = stack.length ? INNER[stack[stack.length - 1]] : null;
+  const showHome = tab === 'home' && !Inner;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <View style={{ flex: 1 }}>
+      {/* Home stays mounted so the map and the search results are kept when you change tab */}
+      <View style={{ flex: 1, display: showHome ? 'flex' : 'none' }}>
+        <HomeScreen active={showHome} />
+      </View>
+      <View style={{ flex: 1, display: showHome ? 'none' : 'flex' }}>
         {Inner ? (
           <Inner onBack={back} onOpen={open} />
-        ) : tab === 'home' ? (
-          <HomeScreen />
         ) : tab === 'activity' ? (
           <ActivityScreen />
         ) : tab === 'notifications' ? (

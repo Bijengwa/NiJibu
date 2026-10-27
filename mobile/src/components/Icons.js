@@ -187,3 +187,34 @@ export const TrashIcon = (p) => (
     <Path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m5 0V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2" />
   </Icon>
 );
+
+export const ClockIcon = (p) => (
+  <Icon {...p}>
+    <Circle cx="12" cy="12" r="10" />
+    <Polyline points="12 6 12 12 16 14" />
+  </Icon>
+);
+
+export const CloseIcon = (p) => (
+  <Icon {...p}>
+    <Line x1="18" y1="6" x2="6" y2="18" />
+    <Line x1="6" y1="6" x2="18" y2="18" />
+  </Icon>
+);
+
+export const LocateIcon = (p) => (
+  <Icon {...p}>
+    <Circle cx="12" cy="12" r="3" />
+    <Circle cx="12" cy="12" r="8" />
+    <Line x1="12" y1="1" x2="12" y2="4" />
+    <Line x1="12" y1="20" x2="12" y2="23" />
+    <Line x1="1" y1="12" x2="4" y2="12" />
+    <Line x1="20" y1="12" x2="23" y2="12" />
+  </Icon>
+);
+
+export const StarIcon = ({ color, ...p }) => (
+  <Icon {...p} color={color}>
+    <Path fill={color} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+  </Icon>
+);

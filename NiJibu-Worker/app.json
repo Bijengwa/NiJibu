@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "NiJibu Worker",
+    "slug": "NiJibu-Worker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bijengwa.worker"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.bijengwa.worker"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "NiJibu Worker uses your fingerprint to confirm it is you."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "NiJibu Worker needs the camera to take your selfie and ID photo."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "NiJibu Worker uses your location to show where you work and to send you requests close to you."
+        }
+      ]
+    ]
+  }
+}
