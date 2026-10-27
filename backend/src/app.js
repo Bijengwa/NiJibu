@@ -1,10 +1,16 @@
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
+const helmet = require('helmet');
 const db = require('./db');
+const { requireAuth, requireRole } = require('./middleware/auth');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+app.use(helmet());
+// The mobile app does not need CORS. Allow browser origins only if listed in CORS_ORIGINS.
+app.use(cors({ origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : false }));
+app.use(express.json({ limit: '10kb' }));
 
 app.get('/health', async (req, res) => {
   try {
@@ -15,9 +21,20 @@ app.get('/health', async (req, res) => {
   }
 });
 
-app.use('/api/users', require('./routes/users'));
+// Profile photos: random unguessable file names, no directory listing
+app.use('/uploads', express.static(path.join(__dirname, '../uploads'), { index: false, dotfiles: 'ignore', maxAge: '7d' }));
+
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/me', require('./routes/me'));
+app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/users', requireAuth, requireRole('admin'), require('./routes/users'));
+
+app.use((req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
 
 app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed' || err.type === 'entity.too.large') {
+    return res.status(400).json({ error: 'Bad request', code: 'VALIDATION' });
+  }
   console.error(err);
   res.status(err.code === '23505' ? 409 : 500).json({ error: err.code === '23505' ? 'Already exists' : 'Internal server error' });
 });
