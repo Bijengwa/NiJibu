@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Linking, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { USE_MOCK_PROVIDER } from '../config';
 import Button from '../components/Button';
 import EmptyState from '../components/EmptyState';
 import { BellIcon } from '../components/Icons';
 import MapPreview from '../components/MapPreview';
-import RequestCard from '../components/RequestCard';
+import ActiveJobCard from '../components/ActiveJobCard';
+import OfferCard from '../components/OfferCard';
 import { useJobs } from '../context/JobsContext';
 import { useSettings } from '../context/SettingsContext';
 import { mapsUrl } from '../location/geo';
@@ -16,7 +16,7 @@ import { errorMessage } from '../utils/errors';
 export default function RequestsScreen() {
   const { colors, t } = useSettings();
   const insets = useSafeAreaInsets();
-  const { online, position, setOnline, requests, accept, decline, complete, simulate } = useJobs();
+  const { online, position, setOnline, offers, active, accept, decline, move } = useJobs();
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState('');
 
@@ -33,8 +33,23 @@ export default function RequestsScreen() {
     }
   };
 
-  const active = requests.filter((r) => r.status === 'accepted');
-  const fresh = requests.filter((r) => r.status === 'new');
+  // Clock for the offer countdowns (only ticks while there are offers)
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!offers.length) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [offers.length]);
+  const fresh = active ? [] : offers.filter((o) => new Date(o.expires_at).getTime() > now);
+
+  const [doneMsg, setDoneMsg] = useState(false);
+  const finish = async (stage) => {
+    const r = await move(stage);
+    if (r?.status === 'completed') {
+      setDoneMsg(true);
+      setTimeout(() => setDoneMsg(false), 8000);
+    }
+  };
 
   return (
     <ScrollView
@@ -81,14 +96,17 @@ export default function RequestsScreen() {
       )}
       {!!error && <Text style={[styles.error, { color: colors.error }]}>{errorMessage(t, error)}</Text>}
 
-      {active.map((r) => (
-        <RequestCard key={r.id} request={r} onComplete={complete} />
-      ))}
-      {fresh.map((r) => (
-        <RequestCard key={r.id} request={r} onAccept={accept} onDecline={decline} />
+      {doneMsg && (
+        <View style={[styles.doneBox, { backgroundColor: colors.surface, borderColor: colors.success }]}>
+          <Text style={[styles.doneText, { color: colors.success }]}>{t('jobFinished')}</Text>
+        </View>
+      )}
+      {active && <ActiveJobCard job={active} onMove={finish} />}
+      {fresh.map((o) => (
+        <OfferCard key={o.offer_id} offer={o} now={now} onAccept={accept} onDecline={decline} />
       ))}
 
-      {!active.length && !fresh.length && (
+      {!active && !fresh.length && (
         <View style={styles.empty}>
           <EmptyState
             icon={(c) => <BellIcon size={36} color={c} />}
@@ -98,12 +116,6 @@ export default function RequestsScreen() {
         </View>
       )}
 
-      {USE_MOCK_PROVIDER && (
-        <View style={[styles.test, { borderColor: colors.border }]}>
-          <Text style={[styles.testNote, { color: colors.textMuted }]}>{t('demoRequests')}</Text>
-          {online && <Button title={t('simulateRequest')} variant="secondary" onPress={simulate} style={styles.testBtn} />}
-        </View>
-      )}
     </ScrollView>
   );
 }
@@ -116,7 +128,6 @@ const styles = StyleSheet.create({
   shared: { fontSize: 12, marginTop: 8 },
   error: { fontSize: 14, marginTop: 10 },
   empty: { flex: 1, minHeight: 280 },
-  test: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 12, marginTop: 24 },
-  testNote: { fontSize: 12 },
-  testBtn: { height: 42, marginTop: 8 },
+  doneBox: { borderWidth: 1.5, borderRadius: 14, padding: 14, marginTop: 14 },
+  doneText: { fontSize: 15, fontWeight: '700' },
 });

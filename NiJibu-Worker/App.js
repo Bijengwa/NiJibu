@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { JobsProvider } from './src/context/JobsContext';
 import WorkerTabs from './src/navigation/WorkerTabs';
 import { ProviderProvider, useProvider } from './src/context/ProviderContext';
+import { ServicesProvider } from './src/context/ServicesContext';
 import { SettingsProvider, useSettings } from './src/context/SettingsContext';
 import AuthScreen from './src/screens/AuthScreen';
 import DetailsScreen from './src/screens/DetailsScreen';
@@ -109,9 +110,11 @@ export default function App() {
     <SafeAreaProvider>
       <AuthProvider>
         <SettingsProvider>
-          <ProviderProvider>
-            <Root />
-          </ProviderProvider>
+          <ServicesProvider>
+            <ProviderProvider>
+              <Root />
+            </ProviderProvider>
+          </ServicesProvider>
         </SettingsProvider>
       </AuthProvider>
     </SafeAreaProvider>

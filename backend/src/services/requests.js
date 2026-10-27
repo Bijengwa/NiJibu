@@ -195,7 +195,7 @@ async function loadView(user, requestId) {
     .where('r.id', requestId)
     .first(
       'r.*',
-      's.name_sw', 's.name_en',
+      's.slug', 's.name_sw', 's.name_en',
       'cu.name as c_name', 'cu.phone as c_phone', 'cu.avatar_path as c_avatar',
       'p.user_id as p_user_id', 'p.lat as p_lat', 'p.lng as p_lng',
       'pu.name as p_name', 'pu.phone as p_phone', 'pu.avatar_path as p_avatar'
@@ -209,7 +209,7 @@ async function loadView(user, requestId) {
   const base = {
     id: r.id,
     status: r.status,
-    service: { id: r.service_id, name_sw: r.name_sw, name_en: r.name_en },
+    service: { id: r.service_id, slug: r.slug, name_sw: r.name_sw, name_en: r.name_en },
     lat: r.lat,
     lng: r.lng,
     address: r.address,

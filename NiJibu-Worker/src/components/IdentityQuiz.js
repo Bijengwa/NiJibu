@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { checkAnswer } from '../api/provider';
-import { USE_MOCK_PROVIDER } from '../config';
 import { useSettings } from '../context/SettingsContext';
 import { TZ_REGIONS } from '../data/regions';
 import { advance, MAX, NEED, pickQuestions, toAnswer, validateInput } from '../signup/questions';
@@ -85,11 +84,6 @@ export default function IdentityQuiz({ nidaNumber, onPass, onExit }) {
 
       <Button title={busy ? t('pleaseWait') : t('quizCheck')} onPress={submit} loading={busy} style={{ marginTop: 20 }} />
 
-      {USE_MOCK_PROVIDER && (
-        <View style={[styles.demo, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Text style={[styles.demoText, { color: colors.textMuted }]}>{t('quizDemo')}</Text>
-        </View>
-      )}
     </View>
   );
 }
@@ -100,6 +94,4 @@ const styles = StyleSheet.create({
   fail: { alignItems: 'center', marginTop: 28 },
   failTitle: { fontSize: 20, fontWeight: '800', textAlign: 'center' },
   body: { fontSize: 15, textAlign: 'center', marginTop: 10 },
-  demo: { borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 24 },
-  demoText: { fontSize: 13 },
 });

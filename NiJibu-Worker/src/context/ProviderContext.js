@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { updateProfile } from '../api/me';
 import * as providerApi from '../api/provider';
-import { USE_MOCK_PROVIDER } from '../config';
 import { clearDraft, loadDraft } from '../signup/draft';
 import { useAuth } from './AuthContext';
 
@@ -16,16 +15,13 @@ export function ProviderProvider({ children }) {
 
   const load = useCallback(async () => {
     if (!token || !user) return null;
-    providerApi.setMockUser(user.id);
     try {
       let r = await providerApi.getProvider(token);
       // Just registered: send what was typed in the sign-up (names, NIDA) to the new account
       const draft = !r.provider.nida_submitted ? await loadDraft() : null;
       if (draft && String(user.phone || '').endsWith(draft.phone)) {
-        if (!USE_MOCK_PROVIDER) {
-          const full = [draft.firstName, draft.middleName, draft.lastName].filter(Boolean).join(' ');
-          updateUser((await updateProfile(token, { name: full, email: draft.email })).user);
-        }
+        const full = [draft.firstName, draft.middleName, draft.lastName].filter(Boolean).join(' ');
+        updateUser((await updateProfile(token, { name: full, email: draft.email })).user);
         r = await providerApi.submitIdentity(token, draft);
         await clearDraft();
       }
@@ -67,11 +63,9 @@ export function ProviderProvider({ children }) {
       // Name + email go to the user profile (same route as the customer app); the rest to the fundi profile.
       saveDetails: async (values) => {
         const { full_name, email, ...rest } = values;
-        if (!USE_MOCK_PROVIDER) {
-          const r = await updateProfile(token, { name: full_name, email });
-          updateUser(r.user);
-        }
-        const r = await providerApi.saveDetails(token, USE_MOCK_PROVIDER ? values : rest);
+        const r0 = await updateProfile(token, { name: full_name, email });
+        updateUser(r0.user);
+        const r = await providerApi.saveDetails(token, rest);
         setProvider(r.provider);
         return r.provider;
       },

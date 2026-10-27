@@ -1,9 +1,18 @@
-// Same services and keys as the customer app (V1): dobi, bomba, viatu.
-// A fundi can offer one or more.
-export const SERVICES = [
-  { key: 'dobi', emoji: '🧺', name: 'svcDobi', sub: 'svcDobiSub' },
-  { key: 'bomba', emoji: '🔧', name: 'svcPlumber', sub: 'svcPlumberSub' },
-  { key: 'viatu', emoji: '👞', name: 'svcShoe', sub: 'svcShoeSub' },
-];
+// The list of jobs comes from the server. This file only adds the emoji for each one.
+const EMOJI = {
+  dobi: '🧺', 'fundi-bomba': '🔧', 'fundi-umeme': '💡', 'fundi-viatu': '👞', 'fundi-seremala': '🪚',
+  'fundi-rangi': '🎨', 'fundi-simu': '📱', 'fundi-friji': '🧊', usafi: '🧹', 'fundi-magari': '🚗',
+};
 
-export const getService = (key) => SERVICES.find((s) => s.key === key);
+export const emojiOf = (slug) => EMOJI[slug] ?? '🔧';
+
+// Server row -> { key, emoji, label } in the app language
+export const toService = (row, lang) => ({
+  id: row.id,
+  key: row.slug,
+  emoji: emojiOf(row.slug),
+  label: lang === 'sw' ? row.name_sw : row.name_en,
+});
+
+// A service object from an offer / request ({ id, name_sw, name_en }) -> label
+export const labelOf = (svc, lang) => (svc ? (lang === 'sw' ? svc.name_sw : svc.name_en) : '');

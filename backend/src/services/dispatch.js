@@ -54,7 +54,7 @@ function offerView(offer, service, request) {
   return {
     offer_id: offer.id,
     request_id: offer.request_id,
-    service: { id: service.id, name_sw: service.name_sw, name_en: service.name_en },
+    service: { id: service.id, slug: service.slug, name_sw: service.name_sw, name_en: service.name_en },
     distance_km: Math.round(offer.distance_km * 10) / 10,
     address: request.address,
     expires_at: offer.expires_at,

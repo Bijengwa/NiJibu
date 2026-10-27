@@ -1,0 +1,143 @@
+// Fundi profile + NIDA test mode: sign-up identity check, details, payout, admin NIDA photos.
+require('dotenv').config();
+process.env.NIDA_MODE = 'mock';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('http');
+const db = require('../src/db');
+const app = require('../src/app');
+const { signToken } = require('../src/lib/token');
+
+const PHONES = ['255799900101', '255799900102', '255799900103'];
+const NIDA = '19950312123451234512'; // born 12/03/1995
+const NIDA2 = '19900101123451234599';
+let server, base;
+
+async function cleanup() {
+  await db('users').whereIn('phone', PHONES).del(); // cascades to provider_profiles
+}
+async function makeUser(phone, name, role = 'user') {
+  const [u] = await db('users').insert({ phone, name, role, password_hash: 'x', phone_verified_at: db.fn.now() }).returning('*');
+  return { id: u.id, token: signToken(u) };
+}
+async function api(user, method, path, body) {
+  const isForm = body instanceof FormData;
+  const res = await fetch(base + path, {
+    method,
+    headers: { ...(isForm || !body ? {} : { 'Content-Type': 'application/json' }), ...(user ? { Authorization: `Bearer ${user.token}` } : {}) },
+    body: body ? (isForm ? body : JSON.stringify(body)) : undefined,
+  });
+  const raw = await res.arrayBuffer();
+  let json = {};
+  try { json = JSON.parse(Buffer.from(raw).toString()); } catch {}
+  return { status: res.status, body: json, raw };
+}
+
+test.before(async () => {
+  await cleanup();
+  await db('provider_profiles').whereIn('nida_hash', []).del();
+  server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  base = `http://localhost:${server.address().port}`;
+});
+test.after(async () => {
+  await cleanup();
+  await new Promise((r) => server.close(r));
+  await db.destroy();
+});
+
+const match = (nida = NIDA, over = {}) =>
+  api(null, 'POST', '/api/provider/identity/match', { nida_number: nida, first_name: 'Asha', last_name: 'Juma', phone: '799900101', ...over });
+const answer = (nida, id, a) => api(null, 'POST', '/api/provider/identity/answer', { nida_number: nida, question_id: id, answer: a });
+
+test('identity check: match rules, 5 in a row passes, link verifies (mock)', async () => {
+  assert.equal((await match(NIDA, { last_name: 'Nomatch' })).body.code, 'NIDA_NAME_MISMATCH');
+  assert.equal((await match(NIDA, { phone: '700000000' })).body.code, 'NIDA_PHONE_MISMATCH');
+  assert.equal((await match('12345678901234567890')).body.code, 'NIDA_NOT_FOUND');
+  assert.equal((await answer(NIDA, 'dob', '12031995')).body.code, 'IDENTITY_NOT_VERIFIED'); // no match yet
+
+  assert.equal((await match()).status, 200);
+  assert.equal((await answer(NIDA, 'dob', '01011990')).body.correct, false); // wrong date of birth
+  for (let i = 0; i < 4; i++) assert.equal((await answer(NIDA, 'motherFirst', 'Neema')).body.correct, true);
+  // streak was reset by the wrong answer: 4 in a row is not a pass yet -> linking is refused
+  const user = await makeUser(PHONES[0], 'Asha Juma');
+  let link = await api(user, 'POST', '/api/provider/identity', { nida_number: NIDA, first_name: 'Asha', last_name: 'Juma' });
+  assert.equal(link.body.code, 'IDENTITY_NOT_VERIFIED');
+  assert.equal((await answer(NIDA, 'dob', '12/03/1995')).body.correct, true);
+  link = await api(user, 'POST', '/api/provider/identity', { nida_number: NIDA, first_name: 'Asha', middle_name: 'M', last_name: 'Juma' });
+  assert.equal(link.status, 200);
+  assert.equal(link.body.provider.status, 'verified');
+  assert.equal(link.body.provider.nida_name, 'ASHA M JUMA');
+  assert.equal(link.body.provider.nida_submitted, true);
+  // the NIDA number is never stored in plain text
+  const row = await db('provider_profiles').where({ user_id: user.id }).first();
+  assert.ok(row.nida_enc && !row.nida_enc.includes(NIDA));
+});
+
+test('identity check: 8 questions without 5 in a row locks for 24 h', async () => {
+  assert.equal((await match(NIDA2)).status, 200);
+  let last;
+  for (let i = 0; i < 4; i++) last = await answer(NIDA2, 'motherFirst', 'wrong');
+  assert.equal(last.status, 200);
+  // after 4 wrong answers 5-in-a-row is no longer reachable (8 - 4 < 5): the server locks
+  last = await answer(NIDA2, 'motherFirst', 'Neema');
+  assert.equal(last.body.code, 'IDENTITY_LOCKED');
+  assert.equal((await match(NIDA2)).body.code, 'IDENTITY_LOCKED');
+});
+
+test('details, same NIDA twice, payout, NIDA photos, admin verify', async () => {
+  const user = await makeUser(PHONES[1], 'Baraka Said');
+  const empty = await api(user, 'GET', '/api/provider');
+  assert.equal(empty.body.provider.status, 'incomplete');
+
+  const bad = await api(user, 'PUT', '/api/provider', { services: ['nope'], lat: -6.6, lng: 39.2, experience: '1-3', availability: 'always' });
+  assert.equal(bad.status, 400);
+  const saved = await api(user, 'PUT', '/api/provider', { services: ['dobi', 'fundi-bomba'], lat: -6.6, lng: 39.2, experience: '1-3', availability: 'always' });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.provider.services.sort(), ['dobi', 'fundi-bomba']);
+  assert.equal(saved.body.provider.status, 'incomplete'); // no NIDA yet
+
+  // NIDA photos (a tiny real PNG)
+  const sharp = require('sharp');
+  const png = await sharp({ create: { width: 20, height: 20, channels: 3, background: '#a52' } }).png().toBuffer();
+  const form = () => {
+    const f = new FormData();
+    f.append('nida_number', '19880505123451234577');
+    f.append('selfie', new Blob([png], { type: 'image/png' }), 's.png');
+    f.append('id_photo', new Blob([png], { type: 'image/png' }), 'i.png');
+    return f;
+  };
+  const sent = await api(user, 'POST', '/api/provider/nida', form());
+  assert.equal(sent.status, 200);
+  assert.equal(sent.body.provider.status, 'pending');
+  // the same NIDA cannot be used by another account
+  const other = await makeUser(PHONES[2], 'Other One');
+  await api(other, 'PUT', '/api/provider', { services: ['dobi'], lat: -6.6, lng: 39.2, experience: 'lt1', availability: 'always' });
+  assert.equal((await api(other, 'POST', '/api/provider/nida', form())).body.code, 'NIDA_TAKEN');
+
+  assert.equal((await api(user, 'PUT', '/api/provider/payout', { network: 'bad', number: '799900102' })).status, 400);
+  const paid = await api(user, 'PUT', '/api/provider/payout', { network: 'mpesa', number: '799900102' });
+  assert.equal(paid.body.provider.payout_set, true);
+
+  // pending fundi cannot go online; admin sees photos and verifies
+  assert.equal((await api(user, 'POST', '/api/provider/online', { lat: -6.6, lng: 39.2 })).body.code, 'NOT_VERIFIED');
+  const admin = await makeUser('255799900199', 'Admin', 'admin');
+  try {
+    const pid = (await db('provider_profiles').where({ user_id: user.id }).first()).id;
+    const photo = await api(admin, 'GET', `/api/admin/providers/${pid}/nida/selfie`);
+    assert.equal(photo.status, 200);
+    assert.equal((await api(user, 'GET', `/api/admin/providers/${pid}/nida/selfie`)).status, 403); // not for normal users
+    assert.equal((await api(admin, 'POST', `/api/admin/providers/${pid}/reject`, { reason: 'Blurry photo' })).status, 200);
+    let me = await api(user, 'GET', '/api/provider');
+    assert.equal(me.body.provider.status, 'rejected');
+    assert.equal(me.body.provider.rejection_reason, 'Blurry photo');
+    await api(admin, 'POST', `/api/admin/providers/${pid}/verify`);
+    me = await api(user, 'GET', '/api/provider');
+    assert.equal(me.body.provider.status, 'verified');
+    assert.equal(me.body.provider.rejection_reason, null);
+    assert.equal((await api(user, 'POST', '/api/provider/online', { lat: -6.6, lng: 39.2 })).status, 200);
+  } finally {
+    await db('users').where({ phone: '255799900199' }).del();
+  }
+});

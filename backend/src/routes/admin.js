@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const path = require('path');
 const db = require('../db');
 const { notify } = require('../services/notify');
 
@@ -12,7 +13,7 @@ router.get('/providers', async (req, res, next) => {
       .join('users as u', 'u.id', 'p.user_id')
       .where('p.verification_status', status)
       .orderBy('p.created_at')
-      .select('p.id', 'u.name', 'u.phone', 'p.verification_status', 'p.created_at');
+      .select('p.id', 'u.name', 'u.phone', 'p.verification_status', 'p.nida_submitted', 'p.nida_name', 'p.region', 'p.district', 'p.created_at');
     res.json({ items });
   } catch (err) {
     next(err);
@@ -21,11 +22,12 @@ router.get('/providers', async (req, res, next) => {
 
 const decide = (status) => async (req, res, next) => {
   try {
+    const reason = status === 'rejected' && typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 300) || null : null;
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad request', code: 'VALIDATION' });
     const [p] = await db('provider_profiles')
       .where({ id })
-      .update({ verification_status: status, verified_at: status === 'verified' ? db.fn.now() : null, ...(status === 'verified' ? {} : { is_online: false }) })
+      .update({ verification_status: status, verified_at: status === 'verified' ? db.fn.now() : null, rejection_reason: reason, ...(status === 'verified' ? {} : { is_online: false }) })
       .returning(['id', 'user_id']);
     if (!p) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
     await notify(
@@ -59,6 +61,19 @@ router.get('/search-gaps', async (req, res, next) => {
       .havingRaw('count(*) filter (where l.providers_found = 0) > 0')
       .orderBy('searches_without_provider', 'desc');
     res.json({ days, items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Private NIDA photos (admin only): kind = selfie | id
+router.get('/providers/:id/nida/:kind', async (req, res, next) => {
+  try {
+    const p = await db('provider_profiles').where({ id: Number(req.params.id) || 0 }).first('nida_selfie_path', 'nida_id_path');
+    const file = p && (req.params.kind === 'selfie' ? p.nida_selfie_path : req.params.kind === 'id' ? p.nida_id_path : null);
+    if (!file) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+    res.set('Cache-Control', 'private, no-store');
+    res.sendFile(path.join(require('./providerProfile').NIDA_DIR, path.basename(file)));
   } catch (err) {
     next(err);
   }

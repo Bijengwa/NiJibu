@@ -30,6 +30,8 @@ app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/users', requireAuth, requireRole('admin'), require('./routes/users'));
 app.use('/api/admin', requireAuth, requireRole('admin'), require('./routes/admin'));
 app.use('/api/services', require('./routes/services'));
+app.use('/api/provider/identity', require('./routes/identity'));
+app.use('/api/provider', require('./routes/providerProfile'));
 app.use('/api/provider', require('./routes/provider'));
 app.use('/api/requests', require('./routes/requests'));
 app.use('/api/offers', require('./routes/offers'));

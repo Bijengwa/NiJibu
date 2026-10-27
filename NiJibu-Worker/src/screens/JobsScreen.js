@@ -4,12 +4,12 @@ import EmptyState from '../components/EmptyState';
 import { ReceiptIcon } from '../components/Icons';
 import { useJobs } from '../context/JobsContext';
 import { useSettings } from '../context/SettingsContext';
-import { getService } from '../data/services';
+import { emojiOf, labelOf } from '../data/services';
 import { timeAgo } from '../utils/validation';
 
 // Finished jobs
 export default function JobsScreen() {
-  const { colors, t } = useSettings();
+  const { colors, t, lang } = useSettings();
   const insets = useSafeAreaInsets();
   const { jobs } = useJobs();
 
@@ -25,22 +25,23 @@ export default function JobsScreen() {
       ) : (
         <ScrollView contentContainerStyle={{ padding: 20, paddingLeft: insets.left + 20, paddingRight: insets.right + 20 }}>
           <Text style={[styles.total, { color: colors.textMuted }]}>
-            {t('jobsTotal')}: {jobs.length}
+            {t('jobsTotal')}: {jobs.filter((j) => j.status === 'completed').length}
           </Text>
           {jobs.map((j) => {
-            const svc = getService(j.service);
+            const done = j.status === 'completed';
+            const open = ['accepted', 'on_the_way', 'arrived', 'in_progress'].includes(j.status);
             return (
               <View key={j.id} style={[styles.row, { backgroundColor: colors.surface }]}>
-                <Text style={styles.emoji}>{svc?.emoji}</Text>
+                <Text style={styles.emoji}>{emojiOf(j.slug)}</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.name, { color: colors.text }]}>{svc ? t(svc.name) : j.service}</Text>
+                  <Text style={[styles.name, { color: colors.text }]}>{lang === 'sw' ? j.name_sw : j.name_en}</Text>
                   <Text style={[styles.sub, { color: colors.textMuted }]} numberOfLines={1}>
-                    {j.customer_name} · {j.area}
+                    {j.customer_name}{j.address ? ` · ${j.address}` : ''}
                   </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={[styles.done, { color: colors.success }]}>{t('jobDone')}</Text>
-                  <Text style={[styles.sub, { color: colors.textMuted }]}>{timeAgo(t, j.done_at || j.created_at)}</Text>
+                  <Text style={[styles.done, { color: done ? colors.success : open ? colors.primary : colors.textMuted }]}>{t(`job_${j.status}`)}</Text>
+                  <Text style={[styles.sub, { color: colors.textMuted }]}>{timeAgo(t, j.completed_at || j.created_at)}</Text>
                 </View>
               </View>
             );

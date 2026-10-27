@@ -7,7 +7,7 @@ import { ShieldCheckIcon } from '../components/Icons';
 import IdentityQuiz from '../components/IdentityQuiz';
 import PhotoField from '../components/PhotoField';
 import { FingerprintIcon } from '../components/WorkerIcons';
-import { USE_MOCK_PROVIDER } from '../config';
+import { TEST_MODE } from '../config';
 import { useProvider } from '../context/ProviderContext';
 import { useSettings } from '../context/SettingsContext';
 import { errorMessage } from '../utils/errors';
@@ -130,7 +130,7 @@ export default function NidaScreen({ onBack, onDone }) {
           <Text style={[styles.fingerHelp, { color: colors.textMuted }]}>{t('fingerHelp')}</Text>
         </View>
         {formError}
-        {USE_MOCK_PROVIDER && (
+        {TEST_MODE && (
           <View style={[styles.demo, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.demoText, { color: colors.textMuted }]}>{t('nidaDemoNote')}</Text>
           </View>

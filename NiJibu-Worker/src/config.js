@@ -14,6 +14,6 @@ function guessDevHost() {
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL || `http://${guessDevHost()}:${API_PORT}`;
 
-// Fundi (provider) data is not on the server yet: profile, NIDA and payout are kept
-// on the phone in test mode. Set EXPO_PUBLIC_MOCK_PROVIDER=false when the server is ready.
-export const USE_MOCK_PROVIDER = process.env.EXPO_PUBLIC_MOCK_PROVIDER !== 'false';
+// Test mode: shows hints about the fake NIDA check (matches the server's NIDA_MODE=mock) and lets a phone
+// without a fingerprint sensor simulate the scan. Set EXPO_PUBLIC_TEST_MODE=false when real NIDA is connected.
+export const TEST_MODE = process.env.EXPO_PUBLIC_TEST_MODE !== 'false';

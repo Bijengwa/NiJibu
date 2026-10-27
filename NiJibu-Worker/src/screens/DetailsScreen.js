@@ -10,7 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { useProvider } from '../context/ProviderContext';
 import { useSettings } from '../context/SettingsContext';
 import { AVAILABILITY, EXPERIENCE } from '../data/options';
-import { SERVICES } from '../data/services';
+import { useServices } from '../context/ServicesContext';
 import { errorMessage } from '../utils/errors';
 import { validateEmail, validateFullName, validateRequired } from '../utils/validation';
 
@@ -20,6 +20,7 @@ export default function DetailsScreen({ onDone }) {
   const { colors, t } = useSettings();
   const { logout } = useAuth();
   const { provider, saveDetails } = useProvider();
+  const { services: allServices, error: servicesError, reload: reloadServices } = useServices();
 
   const [name, setName] = useState(provider?.full_name ?? '');
   const [email, setEmail] = useState(provider?.email ?? '');
@@ -96,11 +97,14 @@ export default function DetailsScreen({ onDone }) {
             error={err('email')}
           />
 
+          {!!servicesError && !allServices.length && (
+            <Button title={`${errorMessage(t, servicesError)} · ${t('refresh')}`} variant="secondary" onPress={reloadServices} />
+          )}
           <Select
             multiple
             label={t('servicesLabel')}
             placeholder={t('servicesPlaceholder')}
-            choices={SERVICES.map((s) => ({ value: s.key, label: `${s.emoji}  ${t(s.name)}` }))}
+            choices={allServices.map((s) => ({ value: s.key, label: `${s.emoji}  ${s.label}` }))}
             value={services}
             onChange={set(setServices, 'services')}
             error={err('services')}

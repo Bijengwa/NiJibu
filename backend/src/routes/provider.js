@@ -114,9 +114,9 @@ router.get('/offers', async (req, res, next) => {
       .where({ 'o.provider_id': req.provider.id, 'o.status': 'sent', 'r.status': 'searching' })
       .where('o.expires_at', '>', new Date())
       .orderBy('o.created_at')
-      .select('o.*', 'r.address', 's.id as s_id', 's.name_sw', 's.name_en');
+      .select('o.*', 'r.address', 's.id as s_id', 's.slug', 's.name_sw', 's.name_en');
     res.json({
-      items: rows.map((o) => offerView(o, { id: o.s_id, name_sw: o.name_sw, name_en: o.name_en }, o)),
+      items: rows.map((o) => offerView(o, { id: o.s_id, slug: o.slug, name_sw: o.name_sw, name_en: o.name_en }, o)),
     });
   } catch (err) {
     next(err);
@@ -128,10 +128,11 @@ router.get('/jobs', async (req, res, next) => {
   try {
     const items = await db('requests as r')
       .join('services as s', 's.id', 'r.service_id')
+      .join('users as cu', 'cu.id', 'r.customer_id')
       .where('r.provider_id', req.provider.id)
       .orderBy('r.created_at', 'desc')
       .limit(30)
-      .select('r.id', 'r.status', 'r.address', 'r.created_at', 's.name_sw', 's.name_en');
+      .select('r.id', 'r.status', 'r.address', 'r.created_at', 'r.completed_at', 'cu.name as customer_name', 's.slug', 's.name_sw', 's.name_en');
     res.json({ items });
   } catch (err) {
     next(err);

@@ -21,10 +21,10 @@ export async function getCoords() {
   }
 }
 
-// Calls onChange when the fundi moves (about every 15 s or 50 m). Returns { remove() }.
-export const watchCoords = (onChange) =>
+// Calls onChange when the fundi moves (default every 15 s or 50 m). Returns { remove() }.
+export const watchCoords = (onChange, { timeInterval = 15000, distanceInterval = 50 } = {}) =>
   Location.watchPositionAsync(
-    { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 50 },
+    { accuracy: Location.Accuracy.Balanced, timeInterval, distanceInterval },
     (p) => onChange(toCoords(p))
   );
 

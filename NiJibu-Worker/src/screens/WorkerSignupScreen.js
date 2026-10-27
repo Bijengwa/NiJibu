@@ -7,7 +7,7 @@ import IdentityQuiz from '../components/IdentityQuiz';
 import { EyeIcon, EyeOffIcon, LockIcon, MailIcon, PhoneIcon, ShieldCheckIcon } from '../components/Icons';
 import { FingerprintIcon } from '../components/WorkerIcons';
 import { matchNida } from '../api/provider';
-import { USE_MOCK_PROVIDER } from '../config';
+import { TEST_MODE } from '../config';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { saveDraft } from '../signup/draft';
@@ -141,7 +141,7 @@ export default function WorkerSignupScreen({ onCancel }) {
         {!!errors.form && (
           <Text style={[styles.formError, { color: colors.error }]}>{errorMessage(t, errors.form)}</Text>
         )}
-        {USE_MOCK_PROVIDER && (
+        {TEST_MODE && (
           <View style={[styles.note, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.noteText, { color: colors.textMuted }]}>{t('signupDemo')}</Text>
           </View>
@@ -170,7 +170,7 @@ export default function WorkerSignupScreen({ onCancel }) {
         <Text style={[styles.fingerHelp, { color: colors.textMuted }]}>{t('fingerHelp')}</Text>
       </View>
       {formError}
-      {USE_MOCK_PROVIDER && (
+      {TEST_MODE && (
         <View style={[styles.note, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 24 }]}>
           <Text style={[styles.noteText, { color: colors.textMuted }]}>{t('nidaDemoNote')}</Text>
         </View>

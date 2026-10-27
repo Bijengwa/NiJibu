@@ -1,50 +1,32 @@
-import { USE_MOCK_PROVIDER } from '../config';
 import { request } from './client';
-import * as mock from './jobsMock';
 
-// Requests from customers. Proposed routes for the NiJibu backend:
+// Online switch, offers from customers, the active job and finished jobs.
+//   POST /api/provider/online   { lat, lng }     go live (needs the location)
+//   POST /api/provider/offline
+//   POST /api/provider/location { lat, lng }     heartbeat (every ~15 s; the server drops fundis not seen for 2 min)
+//   GET  /api/provider/offers   -> { items: [Offer] }   offers waiting for me
+//   GET  /api/provider/me       -> { provider: { is_online, active_request_id, ... } }
+//   GET  /api/provider/jobs     -> { items: [Job] }     newest first
+//   POST /api/offers/:id/accept | /decline
+//   GET  /api/requests/:id      -> { request }
+//   POST /api/requests/:id/on-the-way | arrived | start | complete | cancel   -> { request }
 //
-//   PUT  /api/provider/online                 body: { online, lat, lng }   (going online needs the location)
-//   PUT  /api/provider/location               body: { lat, lng }   (every ~15 s or 50 m while online; the server keeps the last point)
-//   GET  /api/provider/requests               -> { requests: [Request] }  (new + the accepted one)
-//   POST /api/provider/requests/:id/accept    -> { request }  (now includes customer_phone)
-//   POST /api/provider/requests/:id/decline   -> { ok: true }
-//   POST /api/provider/requests/:id/complete  -> { request }
-//   GET  /api/provider/jobs                   -> { jobs: [Request] }  (finished jobs, newest first)
-//
-// Request: { id, service, customer_name, area, landmark, lat, lng, distance_km, note, status, created_at, customer_phone? }
-// The customer's lat/lng (and phone) are only sent after 'accepted'.
-// status: 'new' | 'accepted' | 'done'. The phone is only sent after 'accepted'.
+// Offer: { offer_id, request_id, service: {id,name_sw,name_en}, distance_km, address, expires_at }
+//   (no name, phone or exact place until I accept)
+// Request (my job): { id, status, service, lat, lng, address, note, customer: {name, phone, avatar_url} }
+// Live push (Socket.IO): offer:new, offer:closed, request:status
 
-const use = (real, fake) => (USE_MOCK_PROVIDER ? fake : real);
+export const setOnline = (token, coords) => request('/api/provider/online', { method: 'POST', token, body: { lat: coords.lat, lng: coords.lng } });
+export const setOffline = (token) => request('/api/provider/offline', { method: 'POST', token });
+export const sendLocation = (token, c) => request('/api/provider/location', { method: 'POST', token, body: { lat: c.lat, lng: c.lng } });
 
-export const POLL_MS = USE_MOCK_PROVIDER ? 3000 : 10000;
+export const getMe = (token) => request('/api/provider/me', { token });
+export const listOffers = (token) => request('/api/provider/offers', { token });
+export const listJobs = (token) => request('/api/provider/jobs', { token });
+export const getRequest = (token, id) => request(`/api/requests/${id}`, { token });
 
-export const setOnline = (token, online, coords) =>
-  use(
-    () => request('/api/provider/online', { method: 'PUT', token, body: { online, lat: coords?.lat, lng: coords?.lng } }),
-    () => mock.setOnline(online, coords)
-  )();
+export const acceptOffer = (token, offerId) => request(`/api/offers/${offerId}/accept`, { method: 'POST', token });
+export const declineOffer = (token, offerId) => request(`/api/offers/${offerId}/decline`, { method: 'POST', token });
 
-export const sendLocation = (token, coords) =>
-  use(
-    () => request('/api/provider/location', { method: 'PUT', token, body: { lat: coords.lat, lng: coords.lng } }),
-    () => mock.setPosition(coords)
-  )();
-
-export const listRequests = (token) =>
-  use(() => request('/api/provider/requests', { token }), () => mock.list())();
-
-export const acceptRequest = (token, id) =>
-  use(() => request(`/api/provider/requests/${id}/accept`, { method: 'POST', token }), () => mock.accept(id))();
-
-export const declineRequest = (token, id) =>
-  use(() => request(`/api/provider/requests/${id}/decline`, { method: 'POST', token }), () => mock.decline(id))();
-
-export const completeRequest = (token, id) =>
-  use(() => request(`/api/provider/requests/${id}/complete`, { method: 'POST', token }), () => mock.complete(id))();
-
-export const listJobs = (token) =>
-  use(() => request('/api/provider/jobs', { token }), async () => ({ jobs: mock.doneJobs().reverse() }))();
-
-export const simulateRequest = mock.simulate;
+// stage: 'on-the-way' | 'arrived' | 'start' | 'complete' | 'cancel'
+export const moveStage = (token, id, stage) => request(`/api/requests/${id}/${stage}`, { method: 'POST', token, body: {} });

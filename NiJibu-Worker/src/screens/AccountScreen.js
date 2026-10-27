@@ -6,18 +6,20 @@ import SettingsBar from '../components/SettingsBar';
 import { useAuth } from '../context/AuthContext';
 import { useProvider } from '../context/ProviderContext';
 import { useSettings } from '../context/SettingsContext';
-import { SERVICES } from '../data/services';
+import { useServices } from '../context/ServicesContext';
 
 // Profile of the verified fundi, payout and log out
 export default function AccountScreen({ onPayout }) {
   const { colors, t } = useSettings();
   const { user, logout } = useAuth();
   const { provider } = useProvider();
+  const { services: allServices } = useServices();
   const insets = useSafeAreaInsets();
 
   const name = provider.full_name || `+${user.phone}`;
-  const services = SERVICES.filter((s) => provider.services?.includes(s.key))
-    .map((s) => `${s.emoji} ${t(s.name)}`)
+  const services = allServices
+    .filter((s) => provider.services?.includes(s.key))
+    .map((s) => `${s.emoji} ${s.label}`)
     .join('   ');
 
   const confirmLogout = () =>
