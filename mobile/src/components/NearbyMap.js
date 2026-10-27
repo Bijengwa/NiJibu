@@ -11,8 +11,10 @@ const js = (v) => JSON.stringify(v).split(LS).join('\\u2028').split(PS).join('\\
 // Map (Leaflet inside a WebView). To use another map library later, keep these props and the ref methods.
 //   center: first view {lat,lng}   user: {lat,lng}|null   providers: [{id,lat,lng,emoji}]
 //   selectedId   isDark   bottomPadding: height hidden by the bottom sheet   onMarkerPress(id)
+//   target: {lat,lng}|null  where the customer waits (a request is open)
+//   live: {lat,lng,emoji}|null  the fundi who is coming; the camera follows so both stay visible
 const NearbyMap = forwardRef(function NearbyMap(
-  { center, user, providers, selectedId, isDark, bottomPadding, onMarkerPress },
+  { center, user, providers, selectedId, isDark, bottomPadding, onMarkerPress, target = null, live = null },
   ref
 ) {
   const web = useRef(null);
@@ -45,6 +47,33 @@ const NearbyMap = forwardRef(function NearbyMap(
   }, [ready, providers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (ready) call('select', selectedId, pad.current); }, [ready, selectedId, call]);
+
+  // An open request: show where the customer waits, and the fundi coming (moving)
+  const tLat = target?.lat;
+  const tLng = target?.lng;
+  useEffect(() => {
+    if (!ready) return;
+    if (tLat != null) call('setTarget', tLat, tLng);
+    else call('clearTarget');
+  }, [ready, tLat, tLng, call]);
+
+  const lLat = live?.lat;
+  const lLng = live?.lng;
+  const lEmoji = live?.emoji;
+  useEffect(() => {
+    if (!ready) return;
+    if (lLat != null) {
+      call('setLive', lLat, lLng, lEmoji);
+      if (tLat != null) call('track', [[tLat, tLng], [lLat, lLng]], pad.current, false);
+    } else {
+      call('clearLive');
+    }
+  }, [ready, lLat, lLng, lEmoji, tLat, tLng, call]);
+
+  // Waiting for a fundi: show the place, close up
+  useEffect(() => {
+    if (ready && tLat != null && lLat == null) call('recenter', tLat, tLng, pad.current);
+  }, [ready, tLat, tLng, lLat, call]);
 
   // First position of the user: move the map there
   const firstFix = useRef(true);

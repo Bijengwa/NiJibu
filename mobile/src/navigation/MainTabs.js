@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { BackHandler, View } from 'react-native';
 import TabBar from '../components/TabBar';
+import { RequestProvider } from '../context/RequestContext';
+import { ServicesProvider } from '../context/ServicesContext';
 import { useSettings } from '../context/SettingsContext';
 import useNotifications from '../hooks/useNotifications';
 import AccountScreen from '../screens/AccountScreen';
@@ -21,7 +23,18 @@ const INNER = {
   deleteAccount: DeleteAccountScreen,
 };
 
+// Services and the open request are shared by the Home and Activity tabs.
 export default function MainTabs() {
+  return (
+    <ServicesProvider>
+      <RequestProvider>
+        <Tabs />
+      </RequestProvider>
+    </ServicesProvider>
+  );
+}
+
+function Tabs() {
   const { colors } = useSettings();
   const notifications = useNotifications();
   const [tab, setTab] = useState('home');

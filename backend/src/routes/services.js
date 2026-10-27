@@ -37,9 +37,13 @@ router.get(
       });
       await db('search_logs').insert({ user_id: req.user.id, service_id: id, lat, lng, providers_found: found.length });
 
+      // Pins for the map: only blurred positions (about 100 m), no ids, no names
+      const blur = (v) => Math.round(v * 1000) / 1000;
       res.json({
         providers_nearby: found.length,
         nearest_km: found.length ? Math.round(found[0].distance_km * 10) / 10 : null,
+        nearest_eta_min: found.length ? Math.max(1, Math.round((found[0].distance_km / 20) * 60)) : null,
+        pins: found.slice(0, 30).map((p, i) => ({ id: `p${i}`, lat: blur(p.lat), lng: blur(p.lng) })),
       });
     } catch (err) {
       next(err);

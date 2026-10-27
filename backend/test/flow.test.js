@@ -119,6 +119,9 @@ test('full job: offers go to the nearest 3, one wins, live tracking, all stages'
   assert.equal(av.status, 200);
   assert.equal(av.body.providers_nearby, 5); // p1..p4 + far (online, verified, right service)
   assert.equal(av.body.nearest_km, 0.5);
+  assert.equal(av.body.pins.length, 5);
+  assert.ok(av.body.pins.every((p) => Object.keys(p).sort().join() === 'id,lat,lng'), 'pins carry no identity');
+  assert.ok(av.body.nearest_eta_min >= 1);
 
   // request -> offers to the nearest 3 only
   const created = await api(customer, 'POST', '/api/requests', { service_id: dobi, ...CUSTOMER, address: 'Mtongani' });

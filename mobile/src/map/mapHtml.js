@@ -32,6 +32,9 @@ export function buildMapHtml({ center, isDark }) {
   .pin span { transform: rotate(45deg); font-size: 18px; line-height: 1; }
   .pin.sel { background: #1a73e8; width: 48px; height: 48px; }
   .pin.sel span { font-size: 22px; }
+  .pin.live { background: #1a73e8; width: 46px; height: 46px; }
+  .pin.live span { font-size: 22px; }
+  .target { width: 26px; height: 26px; border-radius: 50%; background: #C0392B; border: 4px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.45); }
 </style>
 </head>
 <body>
@@ -49,6 +52,9 @@ export function buildMapHtml({ center, isDark }) {
   var pins = L.layerGroup().addTo(map);
   var pinEls = {};
   var selectedId = null;
+  var targetMarker = null;
+  var liveMarker = null;
+  var tracked = false;
 
   function send(msg) {
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(msg));
@@ -113,6 +119,52 @@ export function buildMapHtml({ center, isDark }) {
         paddingTopLeft: [40, 70], paddingBottomRight: [40, (padBottom || 0) + 30],
         maxZoom: 17, animate: true
       });
+    },
+
+    // The place where the customer waits
+    setTarget: function (lat, lng) {
+      if (!targetMarker) {
+        var icon = L.divIcon({ className: '', html: '<div class="target"></div>', iconSize: [26, 26], iconAnchor: [13, 13] });
+        targetMarker = L.marker([lat, lng], { icon: icon, interactive: false, keyboard: false, zIndexOffset: 500 }).addTo(map);
+      } else {
+        targetMarker.setLatLng([lat, lng]);
+      }
+    },
+    clearTarget: function () {
+      if (targetMarker) { map.removeLayer(targetMarker); targetMarker = null; }
+    },
+
+    // The fundi who is coming: moves smoothly when called again
+    setLive: function (lat, lng, emoji) {
+      if (!liveMarker) {
+        var el = document.createElement('div');
+        el.className = 'pin live';
+        var span = document.createElement('span');
+        span.textContent = emoji;
+        el.appendChild(span);
+        var icon = L.divIcon({ className: '', html: el, iconSize: [46, 46], iconAnchor: [23, 50] });
+        liveMarker = L.marker([lat, lng], { icon: icon, interactive: false, keyboard: false, zIndexOffset: 900 }).addTo(map);
+      } else {
+        liveMarker.setLatLng([lat, lng]);
+      }
+    },
+    clearLive: function () {
+      if (liveMarker) { map.removeLayer(liveMarker); liveMarker = null; }
+      tracked = false;
+    },
+
+    // Keep all points in view above the sheet. Moves the camera only when a point is about to leave the screen.
+    track: function (points, padBottom, force) {
+      if (!points || !points.length) return;
+      var inner = map.getBounds().pad(-0.12);
+      var allIn = points.every(function (p) { return inner.contains(p); });
+      if (force || !tracked || !allIn) {
+        tracked = true;
+        map.fitBounds(L.latLngBounds(points), {
+          paddingTopLeft: [50, 80], paddingBottomRight: [50, (padBottom || 0) + 40],
+          maxZoom: 17, animate: true
+        });
+      }
     },
 
     recenter: function (lat, lng, padBottom) {
