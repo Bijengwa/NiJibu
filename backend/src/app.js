@@ -28,6 +28,11 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/me', require('./routes/me'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/users', requireAuth, requireRole('admin'), require('./routes/users'));
+app.use('/api/admin', requireAuth, requireRole('admin'), require('./routes/admin'));
+app.use('/api/services', require('./routes/services'));
+app.use('/api/provider', require('./routes/provider'));
+app.use('/api/requests', require('./routes/requests'));
+app.use('/api/offers', require('./routes/offers'));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
 
@@ -35,6 +40,7 @@ app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed' || err.type === 'entity.too.large') {
     return res.status(400).json({ error: 'Bad request', code: 'VALIDATION' });
   }
+  if (err.expose) return res.status(err.status).json({ error: err.message, code: err.code });
   console.error(err);
   res.status(err.code === '23505' ? 409 : 500).json({ error: err.code === '23505' ? 'Already exists' : 'Internal server error' });
 });
