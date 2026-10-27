@@ -18,4 +18,4 @@ function publicUser(u) {
   };
 }
 
-module.exports = { publicUser };
+module.exports = { publicUser, avatarUrl };
