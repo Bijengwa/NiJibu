@@ -4,12 +4,17 @@ const db = require('../db');
 const { distanceKm, boundingBox } = require('../lib/geo');
 const realtime = require('../lib/realtime');
 const { notify } = require('./notify');
+const { sendPush } = require('../lib/push');
 
 const RADII_KM = [3, 5, 10]; // start close, widen when nobody is found
 const BATCH_SIZE = 3; // offers sent at the same time
 const OFFER_TTL_MS = 45 * 1000;
-const FRESH_MS = 2 * 60 * 1000; // a provider not seen for 2 minutes counts as offline
+// A provider not seen for this long counts as offline. The worker app sends its place every 30 s while it is open;
+// a phone that sleeps or has the app in the background stops sending, so allow a few minutes.
+const FRESH_MS = (Number(process.env.PROVIDER_FRESH_SECONDS) || 5 * 60) * 1000;
+const MAX_TRIES = 2; // a fundi who did not answer (offer ran out) is asked once more before we move on
 const MAX_SEARCH_MS = 5 * 60 * 1000; // give up after 5 minutes
+const WAIT_FOR_ANYONE_MS = 2 * 60 * 1000; // when nobody at all is found, keep looking this long (a fundi may go online)
 const ACTIVE_JOB = ['accepted', 'on_the_way', 'arrived', 'in_progress'];
 
 // Verified providers who are online, offer the service, are free, and are inside the radius.
@@ -34,6 +39,20 @@ async function findCandidates(q, { serviceId, lat, lng, radiusKm, customerId, ex
     .map((p) => ({ ...p, distance_km: distanceKm(lat, lng, p.lat, p.lng) }))
     .filter((p) => p.distance_km <= radiusKm)
     .sort((a, b) => a.distance_km - b.distance_km);
+}
+
+// Count the providers that pass each filter, one more filter at a time, so the log says exactly
+// why nobody was found (wrong job, not verified, offline, too far, same account...).
+async function explainNoCandidates(q, { serviceId, lat, lng, radiusKm, customerId }) {
+  const box = boundingBox(lat, lng, radiusKm);
+  const count = async (fn) => Number((await fn(q('provider_profiles as p').join('provider_services as ps', 'ps.provider_id', 'p.id').count({ n: 'p.id' }).first())).n);
+  const withService = await count((b) => b.where('ps.service_id', serviceId));
+  const verified = await count((b) => b.where('ps.service_id', serviceId).where('p.verification_status', 'verified'));
+  const online = await count((b) => b.where('ps.service_id', serviceId).where('p.verification_status', 'verified').where('p.is_online', true));
+  const fresh = await count((b) => b.where('ps.service_id', serviceId).where('p.verification_status', 'verified').where('p.is_online', true).where('p.last_seen', '>', new Date(Date.now() - FRESH_MS)));
+  const near = await count((b) => b.where('ps.service_id', serviceId).where('p.verification_status', 'verified').where('p.is_online', true).where('p.last_seen', '>', new Date(Date.now() - FRESH_MS)).whereBetween('p.lat', [box.minLat, box.maxLat]).whereBetween('p.lng', [box.minLng, box.maxLng]));
+  const own = await count((b) => b.where('ps.service_id', serviceId).where('p.user_id', customerId ?? 0));
+  return { withService, verified, online, fresh, inRadius: near, ownAccount: own };
 }
 
 // Tell both sides (and the job room) that the status changed. The apps refetch the request.
@@ -87,7 +106,10 @@ async function advance(requestId) {
     if (Date.now() - new Date(req.created_at).getTime() > MAX_SEARCH_MS) return giveUp();
 
     const service = await trx('services').where({ id: req.service_id }).first();
-    const alreadyOffered = await trx('request_offers').where({ request_id: req.id }).pluck('provider_id');
+    // Who not to ask again: answered (declined / accepted / closed), or asked MAX_TRIES times without an answer
+    const past = await trx('request_offers').where({ request_id: req.id }).select('id', 'provider_id', 'status', 'tries');
+    const alreadyOffered = past.filter((o) => o.status !== 'expired' || o.tries >= MAX_TRIES).map((o) => o.provider_id);
+    const expiredOnce = new Map(past.filter((o) => o.status === 'expired' && o.tries < MAX_TRIES).map((o) => [o.provider_id, o]));
 
     let radius = req.search_radius_km;
     for (;;) {
@@ -103,17 +125,44 @@ async function advance(requestId) {
       if (found.length) {
         const expires_at = new Date(Date.now() + OFFER_TTL_MS);
         for (const p of found.slice(0, BATCH_SIZE)) {
-          const [offer] = await trx('request_offers')
-            .insert({ request_id: req.id, provider_id: p.id, distance_km: p.distance_km, expires_at })
-            .returning('*');
-          effects.push(async () => realtime.emitToUser(p.user_id, 'offer:new', offerView(offer, service, req)));
+          const again = expiredOnce.get(p.id);
+          const [offer] = again
+            ? await trx('request_offers').where({ id: again.id }).update({ status: 'sent', expires_at, distance_km: p.distance_km, tries: again.tries + 1 }).returning('*')
+            : await trx('request_offers')
+                .insert({ request_id: req.id, provider_id: p.id, distance_km: p.distance_km, expires_at, tries: 1 })
+                .returning('*');
+          effects.push(async () => {
+            realtime.emitToUser(p.user_id, 'offer:new', offerView(offer, service, req));
+            // Also a phone alert, for a fundi whose app is closed or in the background
+            sendPush(p.user_id, {
+              title: `${service.name_en} - ${Math.round(offer.distance_km * 10) / 10} km`,
+              body: req.address || 'New request near you',
+              data: { type: 'offer', offer_id: offer.id },
+            });
+          });
         }
         if (radius !== req.search_radius_km) await trx('requests').where({ id: req.id }).update({ search_radius_km: radius });
         return;
       }
 
       const next = RADII_KM.find((r) => r > radius);
-      if (!next) return giveUp();
+      if (!next) {
+        // Say why in the server log (once per request, here at the widest radius)
+        const why = await explainNoCandidates(trx, { serviceId: req.service_id, lat: req.lat, lng: req.lng, radiusKm: radius, customerId: req.customer_id });
+        const age = Date.now() - new Date(req.created_at).getTime();
+        if (!alreadyOffered.length && age < WAIT_FOR_ANYONE_MS) {
+          // Nobody was ever found: keep looking for a short time, a fundi may just be going online
+          if (radius !== req.search_radius_km) await trx('requests').where({ id: req.id }).update({ search_radius_km: radius });
+          if (age % 30000 < 5500) {
+            console.warn(`[dispatch] request ${req.id}: no provider yet. service=${req.service_id} at ${req.lat},${req.lng} radius=${radius}km`, why,
+              '(withService = fundis with this job; verified; online; fresh = seen recently; inRadius; ownAccount = the customer is the fundi)');
+          }
+          return;
+        }
+        console.warn(`[dispatch] request ${req.id}: no provider found. service=${req.service_id} at ${req.lat},${req.lng} radius=${radius}km`, why,
+          '(withService = fundis with this job; verified; online; fresh = seen recently; inRadius; ownAccount = the customer is the fundi)');
+        return giveUp();
+      }
       radius = next;
     }
   });

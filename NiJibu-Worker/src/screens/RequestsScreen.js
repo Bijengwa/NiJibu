@@ -1,10 +1,11 @@
+import ReceiptCards from '../components/ReceiptCards';
 import { useEffect, useState } from 'react';
 import { Linking, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Button from '../components/Button';
 import EmptyState from '../components/EmptyState';
 import { BellIcon } from '../components/Icons';
-import MapPreview from '../components/MapPreview';
+import JobMap from '../components/JobMap';
 import ActiveJobCard from '../components/ActiveJobCard';
 import OfferCard from '../components/OfferCard';
 import { useJobs } from '../context/JobsContext';
@@ -18,10 +19,13 @@ export default function RequestsScreen() {
   const insets = useSafeAreaInsets();
   const { online, position, setOnline, offers, active, accept, decline, move } = useJobs();
   const [switching, setSwitching] = useState(false);
+  const [wanted, setWanted] = useState(false);
+  const shown = switching ? wanted : online; // the switch moves at once; it goes back if it fails
   const [error, setError] = useState('');
 
   const toggle = async (value) => {
     if (switching) return;
+    setWanted(value);
     setSwitching(true);
     setError('');
     try {
@@ -43,8 +47,8 @@ export default function RequestsScreen() {
   const fresh = active ? [] : offers.filter((o) => new Date(o.expires_at).getTime() > now);
 
   const [doneMsg, setDoneMsg] = useState(false);
-  const finish = async (stage) => {
-    const r = await move(stage);
+  const finish = async (stage, body) => {
+    const r = await move(stage, body);
     if (r?.status === 'completed') {
       setDoneMsg(true);
       setTimeout(() => setDoneMsg(false), 8000);
@@ -75,9 +79,8 @@ export default function RequestsScreen() {
           </Text>
         </View>
         <Switch
-          value={online}
+          value={shown}
           onValueChange={toggle}
-          disabled={switching}
           trackColor={{ false: colors.border, true: colors.primary }}
           thumbColor="#FFFFFF"
           accessibilityLabel={online ? t('online') : t('offline')}
@@ -85,7 +88,7 @@ export default function RequestsScreen() {
       </View>
       {online && position && (
         <View>
-          <MapPreview coords={position} height={140} />
+          {!active && <JobMap height={200} />}
           <Text style={[styles.shared, { color: colors.textMuted }]}>
             {t('locationShared')}{' '}
             <Text style={{ color: colors.primary, fontWeight: '700' }} onPress={() => Linking.openURL(mapsUrl(position))}>
@@ -101,6 +104,8 @@ export default function RequestsScreen() {
           <Text style={[styles.doneText, { color: colors.success }]}>{t('jobFinished')}</Text>
         </View>
       )}
+      <ReceiptCards />
+      {active && <JobMap height={230} />}
       {active && <ActiveJobCard job={active} onMove={finish} />}
       {fresh.map((o) => (
         <OfferCard key={o.offer_id} offer={o} now={now} onAccept={accept} onDecline={decline} />

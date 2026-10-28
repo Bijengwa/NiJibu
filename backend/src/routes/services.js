@@ -35,7 +35,7 @@ router.get(
       const found = await findCandidates(db, {
         serviceId: id, lat, lng, radiusKm: RADII_KM[RADII_KM.length - 1], customerId: req.user.id,
       });
-      await db('search_logs').insert({ user_id: req.user.id, service_id: id, lat, lng, providers_found: found.length });
+      if (req.query.quiet !== '1') await db('search_logs').insert({ user_id: req.user.id, service_id: id, lat, lng, providers_found: found.length });
 
       // Pins for the map: only blurred positions (about 100 m), no ids, no names
       const blur = (v) => Math.round(v * 1000) / 1000;

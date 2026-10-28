@@ -8,6 +8,7 @@ const { avatarUrl } = require('../lib/user');
 const realtime = require('../lib/realtime');
 const { notify } = require('./notify');
 const dispatch = require('./dispatch');
+const payments = require('./payments');
 
 const ARRIVE_MAX_KM = Number(process.env.ARRIVE_MAX_KM ?? 0.5); // 0 = do not check (dev only)
 const AVG_SPEED_KMH = 20; // rough city speed for the ETA until real routing is added
@@ -20,7 +21,20 @@ const STAGES = {
   complete: { from: ['in_progress'], to: 'completed', at: 'completed_at' },
 };
 
+// A finished job that the customer has not paid yet (there is no "pay later": pay first, then ask again)
+async function unpaidJobOf(customerId) {
+  return db('requests as r')
+    .where({ 'r.customer_id': customerId, 'r.status': 'completed' })
+    .whereNotNull('r.agreed_price')
+    .whereNotExists(function () {
+      this.select(db.raw('1')).from('payments as pay').whereRaw('pay.request_id = r.id').where('pay.status', 'paid');
+    })
+    .orderBy('r.id', 'desc')
+    .first('r.id');
+}
+
 async function createRequest(user, { service_id, lat, lng, address, note }) {
+  if (await unpaidJobOf(user.id)) throw new HttpError(409, 'PAYMENT_DUE', 'Pay for your finished job first');
   const service = await db('services').where({ id: service_id, active: true }).first();
   if (!service) throw new HttpError(400, 'VALIDATION', 'Unknown service');
 
@@ -112,7 +126,7 @@ async function declineOffer(user, offerId) {
 }
 
 // Provider moves the job forward: on-the-way -> arrived -> start -> complete
-async function moveStage(user, requestId, stageName) {
+async function moveStage(user, requestId, stageName, body = {}) {
   const stage = STAGES[stageName];
   if (!stage) throw new HttpError(404, 'NOT_FOUND', 'Unknown stage');
 
@@ -130,20 +144,40 @@ async function moveStage(user, requestId, stageName) {
     if (away > ARRIVE_MAX_KM) throw new HttpError(400, 'TOO_FAR', 'You are not at the customer location yet');
   }
 
+  // The fundi sets the price BEFORE the work starts. When the work is done the customer confirms it and pays in the app.
+  const change = { status: stage.to, [stage.at]: db.fn.now() };
+  if (stageName === 'start') {
+    if (!payments.validPrice(body.price)) throw new HttpError(400, 'PRICE_REQUIRED', 'Enter the price of the job');
+    change.agreed_price = body.price;
+  }
+
   const changed = await db('requests')
     .where({ id: requestId, provider_id: job.provider_id })
     .whereIn('status', stage.from)
-    .update({ status: stage.to, [stage.at]: db.fn.now() });
+    .update(change);
   if (!changed) throw new HttpError(409, 'BAD_STATE', 'This step is not allowed now');
 
   const text = {
     on_the_way: ['provider_on_the_way', 'Provider is on the way', 'Your provider has started driving to you.'],
     arrived: ['provider_arrived', 'Provider has arrived', 'Your provider is at your location.'],
-    in_progress: ['job_started', 'Work started', 'The work has started.'],
-    completed: ['job_completed', 'Work completed', 'The work is complete.'],
+    in_progress: ['job_started', 'Work started', `The work has started. Price: TZS ${change.agreed_price}.`],
+    completed: ['job_completed', 'Work completed', 'The fundi says the work is done. Please confirm and pay in the app.'],
   }[stage.to];
   await notify(job.customer_id, ...text);
   await dispatch.publishStatus(requestId);
+}
+
+// Customer: "yes, the work is done". Only after this the customer can pay.
+async function confirmWork(user, requestId) {
+  const r = await db('requests').where({ id: requestId, customer_id: user.id }).first();
+  if (!r) throw new HttpError(404, 'NOT_FOUND', 'Request not found');
+  if (r.status !== 'completed' || !r.agreed_price) throw new HttpError(409, 'BAD_STATE', 'The fundi has not finished yet');
+  const changed = await db('requests').where({ id: r.id, status: 'completed' }).whereNull('customer_confirmed_at').update({ customer_confirmed_at: db.fn.now() });
+  if (changed) {
+    const p = await db('provider_profiles').where({ id: r.provider_id }).first('user_id');
+    if (p) await notify(p.user_id, 'work_confirmed', 'Customer confirmed the work', 'The customer confirmed the work. Payment is next.');
+    await dispatch.publishStatus(r.id);
+  }
 }
 
 // Customer or provider cancels before the work starts.
@@ -215,6 +249,7 @@ async function loadView(user, requestId) {
     address: r.address,
     note: r.note,
     agreed_price: r.agreed_price,
+    customer_confirmed_at: r.customer_confirmed_at,
     cancelled_by: r.cancelled_by,
     created_at: r.created_at,
     accepted_at: r.accepted_at,
@@ -239,7 +274,7 @@ async function loadView(user, requestId) {
         eta_min: live ? Math.max(1, Math.round((distanceKm(r.lat, r.lng, r.p_lat, r.p_lng) / AVG_SPEED_KMH) * 60)) : null,
       };
     }
-    return { ...base, role: 'customer', provider };
+    return { ...base, role: 'customer', provider, payment: await payments.paymentView(r.id, 'customer') };
   }
 
   // Provider side: customer details only while the job is yours and active
@@ -247,10 +282,11 @@ async function loadView(user, requestId) {
   return {
     ...base,
     role: 'provider',
+    payment: await payments.paymentView(r.id, 'provider'),
     customer: active || r.status === 'completed'
       ? { name: r.c_name, phone: r.c_phone, avatar_url: avatarUrl({ avatar_path: r.c_avatar }) }
       : null,
   };
 }
 
-module.exports = { createRequest, acceptOffer, declineOffer, moveStage, cancelRequest, loadView, STAGES };
+module.exports = { unpaidJobOf, createRequest, acceptOffer, declineOffer, moveStage, confirmWork, cancelRequest, loadView, STAGES };

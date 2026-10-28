@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Button from '../components/Button';
 import Field from '../components/Field';
 import FormScreen from '../components/FormScreen';
-import { CloseIcon, MailIcon, UserIcon } from '../components/Icons';
+import { CloseIcon, EditIcon, MailIcon, UserIcon } from '../components/Icons';
 import LocationPicker from '../components/LocationPicker';
 import Select from '../components/Select';
 import { useAuth } from '../context/AuthContext';
@@ -47,9 +47,9 @@ export default function DetailsScreen({ onDone, onBack }) {
   const jobs = [
     ...services.map((k) => {
       const s = allServices.find((x) => x.key === k);
-      return { id: k, label: s ? `${s.emoji}  ${s.label}` : k, listed: true };
+      return { id: k, label: s ? s.label : k, listed: true };
     }),
-    ...others.map((n) => ({ id: `x:${n}`, label: `✍️  ${n}`, listed: false, name: n })),
+    ...others.map((n) => ({ id: `x:${n}`, label: n, listed: false, name: n })),
   ];
   const oneAvail = sameAvail && jobs.length > 1; // a single availability for all
 
@@ -146,7 +146,7 @@ export default function DetailsScreen({ onDone, onBack }) {
         multiple
         label={t('servicesLabel')}
         placeholder={t('servicesPlaceholder')}
-        choices={allServices.map((s) => ({ value: s.key, label: `${s.emoji}  ${s.label}` }))}
+        choices={allServices.map((s) => ({ value: s.key, label: s.label }))}
         value={services}
         onChange={(v) => {
           if (v.length + others.length > MAX_JOBS) return setErrors((e) => ({ ...e, services: 'jobsLimit' }));
@@ -178,7 +178,8 @@ export default function DetailsScreen({ onDone, onBack }) {
       <Text style={[styles.help, { color: colors.textMuted }]}>{t('otherJobHelp')}</Text>
       {others.map((n) => (
         <View key={n} style={[styles.chip, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Text style={{ color: colors.text, flex: 1, fontSize: 15 }} numberOfLines={1}>✍️  {n}</Text>
+          <EditIcon size={16} color={colors.textMuted} />
+          <Text style={{ color: colors.text, flex: 1, fontSize: 15, marginLeft: 8 }} numberOfLines={1}>{n}</Text>
           <Text style={{ color: colors.textMuted, fontSize: 12, marginRight: 10 }}>{t('jobWaiting')}</Text>
           <Pressable onPress={() => removeOther(n)} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('removeJob')}>
             <CloseIcon size={18} color={colors.textMuted} />

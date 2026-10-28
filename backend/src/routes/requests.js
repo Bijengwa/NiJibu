@@ -5,6 +5,7 @@ const { requireProvider } = require('../middleware/provider');
 const rateLimit = require('../middleware/rateLimit');
 const { validLat, validLng } = require('../lib/geo');
 const svc = require('../services/requests');
+const payments = require('../services/payments');
 
 router.use(requireAuth);
 
@@ -38,10 +39,11 @@ router.get('/', async (req, res, next) => {
   try {
     const items = await db('requests as r')
       .join('services as s', 's.id', 'r.service_id')
+      .leftJoin('payments as pay', 'pay.request_id', 'r.id')
       .where('r.customer_id', req.user.id)
       .orderBy('r.created_at', 'desc')
       .limit(30)
-      .select('r.id', 'r.status', 'r.address', 'r.created_at', 's.name_sw', 's.name_en');
+      .select('r.id', 'r.status', 'r.address', 'r.created_at', 'r.agreed_price as price', 'r.customer_confirmed_at', 'pay.status as payment_status', 's.slug', 's.name_sw', 's.name_en');
     res.json({ items });
   } catch (err) {
     next(err);
@@ -51,10 +53,11 @@ router.get('/', async (req, res, next) => {
 // The open request of this customer, if any (to restore the screen when the app reopens)
 router.get('/open', async (req, res, next) => {
   try {
-    const r = await db('requests')
-      .where({ customer_id: req.user.id })
-      .whereIn('status', ['searching', 'accepted', 'on_the_way', 'arrived', 'in_progress'])
-      .first('id');
+    const r =
+      (await db('requests')
+        .where({ customer_id: req.user.id })
+        .whereIn('status', ['searching', 'accepted', 'on_the_way', 'arrived', 'in_progress'])
+        .first('id')) || (await svc.unpaidJobOf(req.user.id)); // a finished job still waiting for payment stays open
     res.json({ request: r ? await svc.loadView(req.user, r.id) : null });
   } catch (err) {
     next(err);
@@ -84,12 +87,40 @@ router.post('/:id/cancel', async (req, res, next) => {
   }
 });
 
+// Customer: confirm that the work is done (then pay)
+router.post('/:id/confirm', async (req, res, next) => {
+  try {
+    const id = idOf(req);
+    if (!id) return bad(res);
+    await svc.confirmWork(req.user, id);
+    res.json({ request: await svc.loadView(req.user, id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Customer: pay the price of a finished job (NiJibu keeps the commission, the fundi gets the rest)
+router.post(
+  '/:id/pay',
+  rateLimit({ windowMs: 10 * 60 * 1000, max: 10, key: (req) => `pay:${req.user.id}` }),
+  async (req, res, next) => {
+    try {
+      const id = idOf(req);
+      if (!id) return bad(res);
+      await payments.payRequest(req.user, id, { network: req.body?.network, phone: req.body?.phone });
+      res.json({ request: await svc.loadView(req.user, id) });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // Provider: move the job forward
 router.post('/:id/:stage', requireProvider, async (req, res, next) => {
   try {
     const id = idOf(req);
     if (!id) return bad(res);
-    await svc.moveStage(req.user, id, req.params.stage);
+    await svc.moveStage(req.user, id, req.params.stage, req.body || {});
     res.json({ request: await svc.loadView(req.user, id) });
   } catch (err) {
     next(err);

@@ -35,6 +35,7 @@ function ProviderFlow() {
   const { logout } = useAuth();
   const { provider, loading, loadError, refresh } = useProvider();
   const [override, setOverride] = useState(null); // 'details' | 'nida' | 'payout' | null
+  const [tab, setTab] = useState('requests'); // tab of the verified fundi, kept while a screen opens on top
 
   // Android back button: runs the back action of the screen that is open (set below on each render)
   const backRef = useRef(null);
@@ -98,7 +99,7 @@ function ProviderFlow() {
       view === 'payout' ? (
         <PayoutScreen onDone={() => setOverride(null)} onBack={() => setOverride(null)} />
       ) : (
-        <WorkerTabs onPayout={() => setOverride('payout')} onEditDetails={() => setOverride('details')} />
+        <WorkerTabs tab={tab} onTab={setTab} onPayout={() => setOverride('payout')} onEditDetails={() => setOverride('details')} />
       );
     return provider.status === 'verified' ? <JobsProvider>{body}</JobsProvider> : body;
   }

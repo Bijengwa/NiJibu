@@ -73,14 +73,14 @@ export default function HomeScreen({ active = true }) {
   // The open request decides what the map and the sheet show
   const tripService = request ? services.find((s) => s.id === request.service.id) || null : null;
   const mapProviders = useMemo(
-    () => (request || !service || !avail ? [] : avail.pins.map((p) => ({ ...p, emoji: service.emoji }))),
+    () => (request || !service || !avail ? [] : avail.pins.map((p) => ({ ...p, slug: service.key }))),
     [request, service, avail]
   );
   const target = request ? { lat: request.lat, lng: request.lng } : null;
   const p = request?.provider;
   const live =
     request && p && p.lat != null && ['accepted', 'on_the_way'].includes(request.status)
-      ? { lat: p.lat, lng: p.lng, emoji: tripService?.emoji ?? '🔧' }
+      ? { lat: p.lat, lng: p.lng, slug: tripService?.key }
       : null;
 
   // A new stage of the trip: show the sheet at half height so the map stays visible
@@ -120,7 +120,9 @@ export default function HomeScreen({ active = true }) {
 
       const id = ++requestId.current;
       try {
-        const r = await availability(token, svc.id, center);
+        // Search around the real GPS place (or the chosen place), not the default Dar es Salaam point
+        const here = place || loc.coords || (await loc.locate()) || center;
+        const r = await availability(token, svc.id, here);
         if (id === requestId.current) setAvail(r);
       } catch (e) {
         if (id === requestId.current) setError(e.code || 'NETWORK');
@@ -128,8 +130,22 @@ export default function HomeScreen({ active = true }) {
         if (id === requestId.current) setLoading(false);
       }
     },
-    [center.lat, center.lng, recents, token]
+    [center.lat, center.lng, recents, token, place, loc]
   );
+
+  // Live: while the results are open, ask again every 8 s so fundis who go online or offline show up without a refresh
+  const watchKey = service && !request ? `${service.id}:${place?.lat ?? loc.coords?.lat}:${place?.lng ?? loc.coords?.lng}` : '';
+  useEffect(() => {
+    if (!watchKey || !token) return undefined;
+    const id = setInterval(async () => {
+      const here = place || loc.coords;
+      if (!here) return;
+      try {
+        setAvail(await availability(token, service.id, here, true));
+      } catch {}
+    }, 8000);
+    return () => clearInterval(id);
+  }, [watchKey, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearResults = useCallback(() => {
     requestId.current++;
@@ -148,7 +164,7 @@ export default function HomeScreen({ active = true }) {
   const submitRequest = useCallback(
     async ({ address, note }) => {
       setSubmitError('');
-      const c = place || (await loc.locate()) || loc.coords;
+      const c = place || loc.coords || (await loc.locate());
       if (!c) {
         setSubmitError('LOCATION_DENIED');
         return;
@@ -157,7 +173,7 @@ export default function HomeScreen({ active = true }) {
         await create({ service_id: service.id, lat: c.lat, lng: c.lng, address, note });
         clearResults(); // the trip panel takes over
       } catch (e) {
-        if (e.code === 'ALREADY_OPEN') clearResults();
+        if (e.code === 'ALREADY_OPEN' || e.code === 'PAYMENT_DUE') clearResults();
         else setSubmitError(e.code || 'UNKNOWN');
       }
     },
@@ -169,8 +185,9 @@ export default function HomeScreen({ active = true }) {
   const useGpsPlace = useCallback(async () => {
     setPicking(false);
     setPlace(null);
-    const c = (await loc.locate()) || loc.coords;
+    const c = loc.coords || (await loc.locate());
     if (!c) return;
+    setPlace({ label: '', lat: c.lat, lng: c.lng }); // use it at once; the name comes after
     mapRef.current?.recenter(c);
     try {
       const { place: p } = await reversePlace(token, c);

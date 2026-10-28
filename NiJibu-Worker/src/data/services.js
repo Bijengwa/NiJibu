@@ -1,16 +1,10 @@
-// The list of jobs comes from the server. This file only adds the emoji for each one.
-const EMOJI = {
-  dobi: '🧺', 'fundi-bomba': '🔧', 'fundi-umeme': '💡', 'fundi-viatu': '👞', 'fundi-seremala': '🪚',
-  'fundi-rangi': '🎨', 'fundi-simu': '📱', 'fundi-friji': '🧊', usafi: '🧹', 'fundi-magari': '🚗',
-};
 
-export const emojiOf = (slug) => EMOJI[slug] ?? '🔧';
+// The list of jobs comes from the server. Icons are SVG (see serviceIcons.js and components/ServiceIcon.js).
 
-// Server row -> { key, emoji, label } in the app language
+// Server row -> { id, key, label } in the app language
 export const toService = (row, lang) => ({
   id: row.id,
   key: row.slug,
-  emoji: emojiOf(row.slug),
   label: lang === 'sw' ? row.name_sw : row.name_en,
 });
 

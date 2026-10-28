@@ -210,4 +210,79 @@ router.get('/requests', async (req, res, next) => {
   }
 });
 
+// Money: what customers paid, NiJibu's commission, and what was paid out to fundis
+router.get('/payments', async (req, res, next) => {
+  try {
+    const totals = await db('payments as pay')
+      .leftJoin('payouts as po', 'po.payment_id', 'pay.id')
+      .where('pay.status', 'paid')
+      .select(
+        db.raw('count(*)::int as count'),
+        db.raw('coalesce(sum(pay.amount), 0)::int as gross'),
+        db.raw('coalesce(sum(pay.fee), 0)::int as commission'),
+        db.raw("coalesce(sum(po.amount) filter (where po.status = 'sent'), 0)::int as paid_out"),
+        db.raw("coalesce(sum(po.amount) filter (where po.status is distinct from 'sent'), 0)::int as owed_to_fundis")
+      )
+      .first();
+    const items = await db('payments as pay')
+      .join('requests as r', 'r.id', 'pay.request_id')
+      .join('users as cu', 'cu.id', 'pay.customer_id')
+      .join('provider_profiles as p', 'p.id', 'pay.provider_id')
+      .join('users as pu', 'pu.id', 'p.user_id')
+      .leftJoin('payouts as po', 'po.payment_id', 'pay.id')
+      .orderBy('pay.id', 'desc')
+      .limit(100)
+      .select(
+        'pay.id', 'pay.request_id', 'pay.amount', 'pay.fee', 'pay.fee_percent', 'pay.payout', 'pay.status', 'pay.network', 'pay.reference', 'pay.created_at', 'pay.paid_at',
+        'cu.name as customer_name', 'pu.name as provider_name',
+        'po.id as payout_id', 'po.status as payout_status', 'po.failure as payout_failure'
+      );
+    res.json({ totals, items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Try a payout again (failed, or waiting because the fundi had no payout number)
+router.post('/payouts/:id/retry', async (req, res, next) => {
+  try {
+    const po = await db('payouts').where({ id: Number(req.params.id) }).first();
+    if (!po) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+    const out = await require('../services/payments').sendPayout(po.payment_id);
+    res.json({ payout: out });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Complaints from fundis about payouts
+router.get('/complaints', async (req, res, next) => {
+  try {
+    const status = req.query.status === 'resolved' ? 'resolved' : 'open';
+    const items = await db('payouts as po')
+      .join('payments as pay', 'pay.id', 'po.payment_id')
+      .join('provider_profiles as p', 'p.id', 'po.provider_id')
+      .join('users as pu', 'pu.id', 'p.user_id')
+      .where('po.complaint_status', status)
+      .orderBy('po.complaint_at', 'desc')
+      .select(
+        'po.id as payout_id', 'pay.request_id', 'po.amount', 'po.network', 'po.number', 'po.status as payout_status', 'po.reference', 'po.sent_at',
+        'po.complaint', 'po.complaint_at', 'po.complaint_status', 'po.complaint_note', 'po.resolved_at',
+        'pu.name as provider_name', 'pu.phone as provider_phone'
+      );
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/complaints/:id/resolve', async (req, res, next) => {
+  try {
+    await require('../services/payments').resolveComplaint(Number(req.params.id), req.body?.note, req.body?.resend === true);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

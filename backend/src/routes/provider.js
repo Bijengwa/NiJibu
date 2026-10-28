@@ -123,17 +123,62 @@ router.get('/offers', async (req, res, next) => {
   }
 });
 
+// Money: "I received it" / "I did not receive it"
+router.post('/payments/:requestId/received', async (req, res, next) => {
+  try {
+    await require('../services/payments').confirmReceived(req.user, Number(req.params.requestId));
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router.post('/payments/:requestId/complaint', async (req, res, next) => {
+  try {
+    await require('../services/payments').fileComplaint(req.user, Number(req.params.requestId), req.body?.note);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // My current or last jobs
 router.get('/jobs', async (req, res, next) => {
   try {
     const items = await db('requests as r')
       .join('services as s', 's.id', 'r.service_id')
       .join('users as cu', 'cu.id', 'r.customer_id')
+      .leftJoin('payments as pay', 'pay.request_id', 'r.id')
+      .leftJoin('payouts as po', 'po.payment_id', 'pay.id')
       .where('r.provider_id', req.provider.id)
       .orderBy('r.created_at', 'desc')
       .limit(30)
-      .select('r.id', 'r.status', 'r.address', 'r.created_at', 'r.completed_at', 'cu.name as customer_name', 's.slug', 's.name_sw', 's.name_en');
-    res.json({ items });
+      .select(
+        'r.id', 'r.status', 'r.address', 'r.created_at', 'r.completed_at', 'r.agreed_price as price',
+        'pay.status as payment_status', 'pay.fee', 'pay.payout', 'po.status as payout_status', 'po.received_at', 'po.network as payout_network', 'po.complaint_status', 'po.complaint_note', 'r.customer_confirmed_at',
+        'cu.name as customer_name', 's.slug', 's.name_sw', 's.name_en'
+      );
+    // Money summary over all jobs (not only the 30 shown)
+    const sum = await db('payments as pay')
+      .leftJoin('payouts as po', 'po.payment_id', 'pay.id')
+      .where('pay.provider_id', req.provider.id)
+      .where('pay.status', 'paid')
+      .select(
+        db.raw('coalesce(sum(pay.payout) filter (where po.status = \'sent\'), 0)::int as received'),
+        db.raw('coalesce(sum(pay.payout) filter (where po.status is distinct from \'sent\'), 0)::int as on_the_way')
+      )
+      .first();
+    const unpaid = await db('requests as r')
+      .leftJoin('payments as pay', function () { this.on('pay.request_id', 'r.id').andOn('pay.status', db.raw('?', ['paid'])); })
+      .where('r.provider_id', req.provider.id)
+      .where('r.status', 'completed')
+      .whereNotNull('r.agreed_price')
+      .whereNull('pay.id')
+      .sum({ n: 'r.agreed_price' })
+      .first();
+    res.json({
+      items,
+      totals: { received: sum.received, on_the_way: sum.on_the_way, waiting_customer: Number(unpaid.n || 0) },
+    });
   } catch (err) {
     next(err);
   }

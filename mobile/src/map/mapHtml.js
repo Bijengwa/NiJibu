@@ -1,3 +1,4 @@
+import { DEFAULT_ICON_PATHS, SERVICE_ICON_PATHS } from '../data/serviceIcons';
 import { LEAFLET_CSS, LEAFLET_JS } from './leafletAssets';
 
 // The map page that runs inside the WebView (Leaflet + OpenStreetMap-based tiles).
@@ -29,11 +30,9 @@ export function buildMapHtml({ center, isDark }) {
   .me b { position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; background: rgba(26,115,232,.28); animation: pulse 2s ease-out infinite; }
   @keyframes pulse { 0% { transform: scale(.7); opacity: 1; } 100% { transform: scale(2.6); opacity: 0; } }
   .pin { width: 40px; height: 40px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #6F4226; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
-  .pin span { transform: rotate(45deg); font-size: 18px; line-height: 1; }
+  .pin span { transform: rotate(45deg); display: flex; align-items: center; justify-content: center; }
   .pin.sel { background: #1a73e8; width: 48px; height: 48px; }
-  .pin.sel span { font-size: 22px; }
   .pin.live { background: #1a73e8; width: 46px; height: 46px; }
-  .pin.live span { font-size: 22px; }
   .target { width: 26px; height: 26px; border-radius: 50%; background: #C0392B; border: 4px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.45); }
 </style>
 </head>
@@ -48,6 +47,24 @@ export function buildMapHtml({ center, isDark }) {
   map.attributionControl.setPrefix(false);
 
   var tileLayer = null;
+
+  // Job icons are SVG (no emojis). Built with createElementNS, so nothing is parsed as HTML.
+  var ICONS = ${JSON.stringify(SERVICE_ICON_PATHS)};
+  var ICON_DEFAULT = ${JSON.stringify(DEFAULT_ICON_PATHS)};
+  function iconEl(slug, size) {
+    var NS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width', size); svg.setAttribute('height', size);
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', '#fff'); svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+    (ICONS[slug] || ICON_DEFAULT).forEach(function (d) {
+      var path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    });
+    return svg;
+  }
   var meMarker = null;
   var pins = L.layerGroup().addTo(map);
   var pinEls = {};
@@ -94,7 +111,7 @@ export function buildMapHtml({ center, isDark }) {
         var el = document.createElement('div');
         el.className = 'pin';
         var span = document.createElement('span');
-        span.textContent = p.emoji; // textContent: no HTML injection
+        span.appendChild(iconEl(p.slug, 22));
         el.appendChild(span);
         var icon = L.divIcon({ className: '', html: el, iconSize: [40, 40], iconAnchor: [20, 44] });
         var m = L.marker([p.lat, p.lng], { icon: icon, keyboard: false }).addTo(pins);
@@ -136,12 +153,12 @@ export function buildMapHtml({ center, isDark }) {
     },
 
     // The fundi who is coming: moves smoothly when called again
-    setLive: function (lat, lng, emoji) {
+    setLive: function (lat, lng, slug) {
       if (!liveMarker) {
         var el = document.createElement('div');
         el.className = 'pin live';
         var span = document.createElement('span');
-        span.textContent = emoji;
+        span.appendChild(iconEl(slug, 24));
         el.appendChild(span);
         var icon = L.divIcon({ className: '', html: el, iconSize: [46, 46], iconAnchor: [23, 50] });
         liveMarker = L.marker([lat, lng], { icon: icon, interactive: false, keyboard: false, zIndexOffset: 900 }).addTo(map);

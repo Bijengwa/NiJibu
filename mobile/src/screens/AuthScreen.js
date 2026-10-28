@@ -112,7 +112,7 @@ export default function AuthScreen() {
           <Field
             label={t('phone')}
             icon={<PhoneIcon size={20} color={colors.textMuted} />}
-            prefix="🇹🇿 +255"
+            prefix="+255"
             value={phone}
             onChangeText={(v) => setPhone(onlyDigits(v))}
             placeholder="795259567"

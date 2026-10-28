@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { BackHandler, View } from 'react-native';
 import TabBar from '../components/TabBar';
 import { useSettings } from '../context/SettingsContext';
@@ -8,9 +8,8 @@ import RequestsScreen from '../screens/RequestsScreen';
 
 // Tabs for a verified fundi: Requests, Jobs, Account.
 // Requests stays mounted so the online switch and the list are kept when you change tab.
-export default function WorkerTabs({ onPayout, onEditDetails }) {
+export default function WorkerTabs({ tab, onTab: setTab, onPayout, onEditDetails }) {
   const { colors } = useSettings();
-  const [tab, setTab] = useState('requests');
 
   // Android back button: go to the Requests tab, then leave the app
   useEffect(() => {

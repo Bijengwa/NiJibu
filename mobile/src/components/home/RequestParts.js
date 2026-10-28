@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Avatar from '../Avatar';
-import { CloseIcon, PhoneIcon } from '../Icons';
+import { CloseIcon, LocateIcon, MapIcon, MapPinIcon, PhoneIcon } from '../Icons';
+import PayModal, { money } from '../PayModal';
+import ServiceIcon from '../ServiceIcon';
+import { useRequest } from '../../context/RequestContext';
 import { useSettings } from '../../context/SettingsContext';
 import { errorMessage } from '../../utils/errors';
 
@@ -16,7 +19,7 @@ export function ResultsHeader({ service, count, nearestEta, loading, onClose }) 
   if (!loading) sub = count > 0 ? `${count} ${t('nearby')} · ${nearestEta} ${t('minUnit')}` : t('noProviders');
   return (
     <View style={styles.headRow}>
-      <Text style={styles.headEmoji}>{service.emoji}</Text>
+      <ServiceIcon slug={service.key} size={30} color={colors.primary} />
       <View style={{ flex: 1 }}>
         <Text style={[styles.headTitle, { color: colors.text }]} numberOfLines={1}>{service.label}</Text>
         <Text style={[styles.headSub, { color: colors.textMuted }]}>{sub}</Text>
@@ -120,7 +123,10 @@ export function RequestForm({ loading, error, nearest, hasLocation, onFocus, onS
               style={[styles.suggestRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}
               accessibilityRole="button"
             >
-              <Text style={[styles.suggestMain, { color: colors.text }]} numberOfLines={1}>📍 {p.label}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <MapPinIcon size={16} color={colors.primary} />
+                <Text style={[styles.suggestMain, { color: colors.text, flex: 1 }]} numberOfLines={1}>{p.label}</Text>
+              </View>
               <Text style={[styles.suggestSub, { color: colors.textMuted }]} numberOfLines={1}>{p.full}</Text>
             </Pressable>
           ))}
@@ -129,10 +135,16 @@ export function RequestForm({ loading, error, nearest, hasLocation, onFocus, onS
       {found && found.length === 0 ? <Text style={[styles.suggestSub, { color: colors.textMuted, marginTop: 8 }]}>{t('noPlaces')}</Text> : null}
       <View style={styles.whereActions}>
         <Pressable onPress={onUseGps} hitSlop={8} accessibilityRole="button">
-          <Text style={[styles.whereLink, { color: colors.primary }]}>📍 {t('useMyPlace')}</Text>
+          <View style={styles.linkRow}>
+            <LocateIcon size={16} color={colors.primary} />
+            <Text style={[styles.whereLink, { color: colors.primary }]}>{t('useMyPlace')}</Text>
+          </View>
         </Pressable>
         <Pressable onPress={onPickOnMap} hitSlop={8} accessibilityRole="button">
-          <Text style={[styles.whereLink, { color: colors.primary }]}>🗺️ {picking ? t('tapMapHint') : t('chooseOnMap')}</Text>
+          <View style={styles.linkRow}>
+            <MapIcon size={16} color={colors.primary} />
+            <Text style={[styles.whereLink, { color: colors.primary }]}>{picking ? t('tapMapHint') : t('chooseOnMap')}</Text>
+          </View>
         </Pressable>
       </View>
       <Text style={[styles.label, { color: colors.textMuted }]}>{t('noteLabel')}</Text>
@@ -191,7 +203,7 @@ function ProviderCard({ provider, service }) {
       <Avatar user={{ name: provider.name, avatar_url: provider.avatar_url }} size={52} />
       <View style={{ flex: 1 }}>
         <Text style={[styles.providerName, { color: colors.text }]} numberOfLines={1}>{provider.name || t('yourFundi')}</Text>
-        <Text style={[styles.providerSub, { color: colors.textMuted }]} numberOfLines={1}>{service ? `${service.emoji} ${service.label}` : ''}</Text>
+        <Text style={[styles.providerSub, { color: colors.textMuted }]} numberOfLines={1}>{service ? service.label : ''}</Text>
       </View>
       {provider.phone ? (
         <Pressable
@@ -222,7 +234,11 @@ export function TripPanel({ request, service, onCancel, onDismiss, onRetry }) {
   const { colors, t } = useSettings();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [paying, setPaying] = useState(false);
+  const { reload } = useRequest();
   const { status, provider } = request;
+  const needsPay = status === 'completed' && request.agreed_price && request.payment?.status !== 'paid';
+  const paid = status === 'completed' && request.payment?.status === 'paid';
 
   let [titleKey, bodyKey] = TEXT[status] || ['tripSearchingTitle', null];
   if (status === 'cancelled') {
@@ -269,10 +285,26 @@ export function TripPanel({ request, service, onCancel, onDismiss, onRetry }) {
       {showProvider ? <ProviderCard provider={provider} service={service} /> : null}
 
       {request.address ? (
-        <Text style={[styles.addr, { color: colors.textMuted }]} numberOfLines={2}>📍 {request.address}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 4 }}>
+          <MapPinIcon size={16} color={colors.textMuted} />
+          <Text style={[styles.addr, { color: colors.textMuted, flex: 1 }]} numberOfLines={2}>{request.address}</Text>
+        </View>
       ) : null}
 
       {error ? <Text style={[styles.info, { color: colors.error }]}>{errorMessage(t, error)}</Text> : null}
+
+      {['in_progress', 'completed'].includes(status) && request.agreed_price ? (
+        <View style={[styles.priceBox, { backgroundColor: colors.surface, borderColor: paid ? colors.success : colors.primary }]}>
+          <Text style={{ color: colors.textMuted, fontSize: 13, fontWeight: '600' }}>{paid ? t('payPaidLabel') : t('payToPay')}</Text>
+          <Text style={{ color: paid ? colors.success : colors.text, fontSize: 26, fontWeight: '800', marginTop: 2 }}>{money(request.agreed_price)}</Text>
+        </View>
+      ) : null}
+      {needsPay ? (
+        <Pressable onPress={() => setPaying(true)} style={[styles.button, { backgroundColor: colors.primary }]} accessibilityRole="button">
+          <Text style={[styles.buttonText, { color: colors.onPrimary }]}>{request.customer_confirmed_at ? `${t('payNow')} ${money(request.agreed_price)}` : t('confirmPay')}</Text>
+        </Pressable>
+      ) : null}
+      <PayModal visible={paying} request={request} onClose={() => setPaying(false)} onPaid={reload} />
 
       {finished ? (
         <>
@@ -281,13 +313,15 @@ export function TripPanel({ request, service, onCancel, onDismiss, onRetry }) {
               <Text style={[styles.buttonText, { color: colors.onPrimary }]}>{t('requestAgain')}</Text>
             </Pressable>
           ) : null}
-          <Pressable
-            onPress={onDismiss}
-            style={[styles.button, status === 'completed' ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface, marginTop: 10 }]}
-            accessibilityRole="button"
-          >
-            <Text style={[styles.buttonText, { color: status === 'completed' ? colors.onPrimary : colors.text }]}>{status === 'completed' ? t('done') : t('close')}</Text>
-          </Pressable>
+          {needsPay ? null : (
+            <Pressable
+              onPress={onDismiss}
+              style={[styles.button, status === 'completed' ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface, marginTop: 10 }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.buttonText, { color: status === 'completed' ? colors.onPrimary : colors.text }]}>{status === 'completed' ? t('done') : t('close')}</Text>
+            </Pressable>
+          )}
         </>
       ) : null}
 
@@ -311,9 +345,10 @@ const styles = StyleSheet.create({
   suggestMain: { fontSize: 15, fontWeight: '600' },
   suggestSub: { fontSize: 12, marginTop: 2 },
   whereActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, gap: 12 },
+  priceBox: { borderWidth: 1.5, borderRadius: 14, padding: 14, marginTop: 14, alignItems: 'center' },
   whereLink: { fontSize: 14, fontWeight: '700' },
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  headEmoji: { fontSize: 30 },
   headTitle: { fontSize: 20, fontWeight: '800' },
   headSub: { fontSize: 14, marginTop: 1 },
   close: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },

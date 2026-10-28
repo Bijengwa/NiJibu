@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChevronLeftIcon, ClockIcon, CloseIcon, SearchIcon } from '../Icons';
+import ServiceIcon from '../ServiceIcon';
 import { useServices } from '../../context/ServicesContext';
 import { useSettings } from '../../context/SettingsContext';
 
@@ -86,7 +87,7 @@ export function ServiceCards({ onPick }) {
           accessibilityRole="button"
           accessibilityLabel={s.label}
         >
-          <Text style={styles.emoji}>{s.emoji}</Text>
+          <ServiceIcon slug={s.key} size={30} color={colors.primary} />
           <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={2}>{s.label}</Text>
           <Text style={[styles.cardSub, { color: colors.textMuted }]} numberOfLines={1}>{s.sub}</Text>
         </Pressable>
@@ -144,11 +145,12 @@ export function RecentList({ keys, onPick, onClear }) {
 
 // Suggestions while typing (or all services when the box is empty)
 export function ServiceList({ title, services, onPick }) {
+  const { colors } = useSettings();
   return (
     <View>
       {title ? <SectionTitle>{title}</SectionTitle> : null}
       {services.map((s) => (
-        <ServiceRow key={s.key} service={s} icon={<Text style={{ fontSize: 22 }}>{s.emoji}</Text>} onPress={() => onPick(s)} />
+        <ServiceRow key={s.key} service={s} icon={<ServiceIcon slug={s.key} size={22} color={colors.primary} />} onPress={() => onPick(s)} />
       ))}
     </View>
   );
@@ -163,7 +165,7 @@ const styles = StyleSheet.create({
   inputText: { flex: 1, fontSize: 17, height: '100%' },
   cards: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16 },
   card: { width: '31%', flexGrow: 1, minHeight: 112, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center' },
-  emoji: { fontSize: 32, marginBottom: 6 },
+  emoji: { marginBottom: 6 },
   cardTitle: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
   cardSub: { fontSize: 12, marginTop: 2 },
   sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 22, marginBottom: 6 },

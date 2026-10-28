@@ -206,11 +206,75 @@ test('full job: offers go to the nearest 3, one wins, live tracking, all stages'
   assert.equal(view.status, 'arrived');
   assert.equal(view.provider.lat, null);
 
-  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`)).status, 200);
+  // the fundi must set the price BEFORE the work starts
+  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`)).body.code, 'PRICE_REQUIRED');
+  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`, { price: 50 })).body.code, 'PRICE_REQUIRED');
+  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`, { price: 20000 })).status, 200);
+  assert.equal((await api(customer, 'GET', `/api/requests/${rid}`)).body.request.agreed_price, 20000, 'the customer sees the price');
   assert.equal((await api(customer, 'POST', `/api/requests/${rid}/cancel`)).body.code, 'BAD_STATE'); // too late to cancel
+  await db('provider_profiles').where({ id: winner.provider_id }).update({ payout_network: 'mpesa', payout_number: '712345678' });
   assert.equal((await api(winner, 'POST', `/api/requests/${rid}/complete`)).status, 200);
   view = (await api(customer, 'GET', `/api/requests/${rid}`)).body.request;
   assert.equal(view.status, 'completed');
+  assert.equal(view.agreed_price, 20000);
+
+  // no "pay later": a new request is refused until the finished job is paid
+  assert.equal((await api(customer, 'POST', '/api/requests', { service_id: dobi, ...CUSTOMER })).body.code, 'PAYMENT_DUE');
+  assert.equal((await api(customer, 'GET', '/api/requests/open')).body.request.id, rid, 'the unpaid job stays open');
+
+  // the customer must confirm the work before paying
+  assert.equal((await api(customer, 'POST', `/api/requests/${rid}/pay`, { network: 'mpesa', phone: '0712345678' })).body.code, 'NOT_CONFIRMED');
+  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/confirm`)).status, 404, 'the fundi cannot confirm for the customer');
+  assert.equal((await api(customer, 'POST', `/api/requests/${rid}/confirm`)).status, 200);
+  assert.ok((await api(customer, 'GET', `/api/requests/${rid}`)).body.request.customer_confirmed_at);
+
+  // payment: customer pays in the app, NiJibu keeps 10 %, the fundi gets 90 %
+  assert.equal((await api(customer, 'POST', `/api/requests/${rid}/pay`, { network: 'bank', phone: '0712345678' })).status, 400);
+  assert.equal((await api(customer, 'POST', `/api/requests/${rid}/pay`, { network: 'mpesa', phone: '12' })).status, 400);
+  assert.equal((await api(stranger, 'POST', `/api/requests/${rid}/pay`, { network: 'mpesa', phone: '0712345678' })).status, 404);
+  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/pay`, { network: 'mpesa', phone: '0712345678' })).status, 404, 'the fundi cannot pay');
+  const failed = await api(customer, 'POST', `/api/requests/${rid}/pay`, { network: 'mpesa', phone: '0712340000' });
+  assert.equal(failed.status, 402);
+  assert.equal(failed.body.code, 'PAYMENT_FAILED');
+  const failedRow = await db('payments').where({ request_id: rid }).first();
+  assert.equal(failedRow.status, 'failed');
+  assert.equal((await db('payouts').where({ payment_id: failedRow.id }).first()), undefined, 'no payout for a failed payment');
+  const paid = await api(customer, 'POST', `/api/requests/${rid}/pay`, { network: 'mpesa', phone: '0712345678' });
+  assert.equal(paid.status, 200);
+  assert.equal(paid.body.request.payment.status, 'paid');
+  assert.equal((await api(customer, 'POST', `/api/requests/${rid}/pay`, { network: 'mpesa', phone: '0712345678' })).body.code, 'ALREADY_PAID');
+  const money = (await api(winner, 'GET', `/api/requests/${rid}`)).body.request.payment;
+  assert.deepEqual([money.amount, money.fee, money.payout, money.payout_status], [20000, 2000, 18000, 'sent']);
+  assert.equal(money.fee + money.payout, money.amount);
+
+  // the fundi confirms he received it, or complains to the admin
+  assert.equal((await api(customer, 'POST', `/api/provider/payments/${rid}/received`)).status, 403);
+  assert.equal((await api(winner, 'POST', `/api/provider/payments/${rid}/complaint`, { note: 'x' })).status, 400);
+  assert.equal((await api(winner, 'POST', `/api/provider/payments/${rid}/complaint`, { note: 'Money did not reach my phone' })).status, 200);
+  assert.equal((await api(winner, 'POST', `/api/provider/payments/${rid}/complaint`, { note: 'Money did not reach my phone' })).body.code, 'COMPLAINT_OPEN');
+  const admin2 = await makeUser('boss2', '255799900061');
+  await db('users').where({ id: admin2.id }).update({ role: 'admin' });
+  const open = (await api(admin2, 'GET', '/api/admin/complaints')).body.items;
+  assert.equal(open.length, 1);
+  assert.equal(open[0].complaint, 'Money did not reach my phone');
+  assert.equal((await api(winner, 'GET', '/api/admin/complaints')).status, 403);
+  assert.equal((await api(admin2, 'POST', `/api/admin/complaints/${open[0].payout_id}/resolve`, { note: 'Sent again' })).status, 200);
+  assert.equal((await api(admin2, 'GET', '/api/admin/complaints')).body.items.length, 0);
+  assert.equal((await api(winner, 'GET', `/api/requests/${rid}`)).body.request.payment.complaint_status, 'resolved');
+  assert.equal((await api(winner, 'POST', `/api/provider/payments/${rid}/received`)).status, 200);
+  assert.ok((await api(winner, 'GET', `/api/requests/${rid}`)).body.request.payment.received_at);
+  const jobs = (await api(winner, 'GET', '/api/provider/jobs')).body;
+  assert.equal(jobs.totals.received, 18000);
+  assert.equal(jobs.totals.waiting_customer, 0);
+  assert.equal(jobs.items[0].price, 20000);
+
+  // a payout that fails stays visible for the admin to retry
+  const poId = (await db('payouts').where({ payment_id: failedRow.id }).first('id')).id;
+  await db('payouts').where({ id: poId }).update({ status: 'failed', failure: 'DECLINED' });
+  const boss = await makeUser('boss', '255799900060');
+  await db('users').where({ id: boss.id }).update({ role: 'admin' });
+  const retried = await api(boss, 'POST', `/api/admin/payouts/${poId}/retry`);
+  assert.equal(retried.body.payout.status, 'sent');
   for (const k of ['accepted_at', 'on_the_way_at', 'arrived_at', 'started_at', 'completed_at']) assert.ok(view[k], k);
 
   // the winner is free again and customer can ask again
@@ -253,6 +317,12 @@ test('declines move to the next batch; widening radius; give up', async () => {
   await db('request_offers').where({ request_id: rid }).update({ expires_at: new Date(Date.now() - 1000) });
   await dispatch.tick();
   await waitFor(sd, 'offer:closed', (p) => p.reason === 'expired');
+  // d did not answer: d is asked one more time (same offer, new time), then nobody is left
+  await dispatch.tick();
+  assert.equal(got(sd, 'offer:new').length, 2, 'd is asked a second time');
+  await db('request_offers').where({ request_id: rid, status: 'sent' }).update({ expires_at: new Date(Date.now() - 1000) });
+  await dispatch.tick();
+  await dispatch.tick();
   const final = (await api(customer, 'GET', `/api/requests/${rid}`)).body.request;
   assert.equal(final.status, 'no_provider');
   assert.equal((await api(d, 'POST', `/api/offers/${oc.offer_id}/accept`)).status, 404); // not theirs
@@ -352,7 +422,7 @@ test('provider onboarding, admin approval, security', async () => {
   await api(person, 'POST', `/api/requests/${own.body.request.id}/cancel`);
 
   // heartbeat silence -> offline by the clock
-  await db('provider_profiles').where({ id: pid }).update({ last_seen: new Date(Date.now() - 5 * 60 * 1000) });
+  await db('provider_profiles').where({ id: pid }).update({ last_seen: new Date(Date.now() - 10 * 60 * 1000) });
   await dispatch.tick();
   assert.equal((await api(person, 'GET', '/api/provider/me')).body.provider.is_online, false);
 

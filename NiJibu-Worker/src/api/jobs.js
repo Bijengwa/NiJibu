@@ -23,10 +23,13 @@ export const sendLocation = (token, c) => request('/api/provider/location', { me
 export const getMe = (token) => request('/api/provider/me', { token });
 export const listOffers = (token) => request('/api/provider/offers', { token });
 export const listJobs = (token) => request('/api/provider/jobs', { token });
+export const confirmReceived = (token, requestId) => request(`/api/provider/payments/${requestId}/received`, { method: 'POST', token });
+export const fileComplaint = (token, requestId, note) => request(`/api/provider/payments/${requestId}/complaint`, { method: 'POST', token, body: { note } });
 export const getRequest = (token, id) => request(`/api/requests/${id}`, { token });
 
 export const acceptOffer = (token, offerId) => request(`/api/offers/${offerId}/accept`, { method: 'POST', token });
 export const declineOffer = (token, offerId) => request(`/api/offers/${offerId}/decline`, { method: 'POST', token });
 
 // stage: 'on-the-way' | 'arrived' | 'start' | 'complete' | 'cancel'
-export const moveStage = (token, id, stage) => request(`/api/requests/${id}/${stage}`, { method: 'POST', token, body: {} });
+// complete needs { price } (TZS): the final price of the job. The customer then pays it in the app.
+export const moveStage = (token, id, stage, body = {}) => request(`/api/requests/${id}/${stage}`, { method: 'POST', token, body });

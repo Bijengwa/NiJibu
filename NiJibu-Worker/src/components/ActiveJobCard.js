@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
-import { emojiOf, labelOf } from '../data/services';
+import { labelOf } from '../data/services';
+import ServiceIcon from './ServiceIcon';
 import { directionsUrl } from '../location/geo';
 import { errorMessage } from '../utils/errors';
 import Button from './Button';
+import PriceModal from './PriceModal';
 import { PhoneIcon } from './Icons';
 
 const pretty = (phone) => `+${phone.slice(0, 3)} ${phone.slice(3, 6)} ${phone.slice(6, 9)} ${phone.slice(9)}`;
@@ -23,16 +25,17 @@ export default function ActiveJobCard({ job, onMove }) {
   const { colors, t, lang } = useSettings();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [askPrice, setAskPrice] = useState(false);
   const next = NEXT[job.status];
   const idx = STEPS.indexOf(job.status);
   const canCancel = job.status !== 'in_progress';
 
-  const run = (name, stage) => async () => {
+  const run = (name, stage, body) => async () => {
     if (busy) return;
     setBusy(name);
     setError('');
     try {
-      await onMove(stage);
+      await onMove(stage, body);
     } catch (e) {
       setError(e.code || 'UNKNOWN');
     } finally {
@@ -56,7 +59,9 @@ export default function ActiveJobCard({ job, onMove }) {
       <Text style={[styles.badge, { color: colors.success }]}>{t(`job_${job.status}`)}</Text>
 
       <View style={styles.head}>
-        <Text style={styles.emoji}>{emojiOf(job.service.slug)}</Text>
+        <View style={[styles.iconBox, { backgroundColor: colors.background }]}>
+          <ServiceIcon slug={job.service.slug} size={28} color={colors.primary} />
+        </View>
         <View style={{ flex: 1 }}>
           <Text style={[styles.service, { color: colors.text }]}>{labelOf(job.service, lang)}</Text>
           {!!job.customer && <Text style={[styles.muted, { color: colors.textMuted }]}>{t('customer')}: {job.customer.name}</Text>}
@@ -84,7 +89,24 @@ export default function ActiveJobCard({ job, onMove }) {
         <Button title={t('callCustomer')} variant="secondary" onPress={() => Linking.openURL(`tel:+${job.customer.phone}`)} style={styles.btn} />
       )}
 
-      {next && <Button title={busy === 'next' ? t('pleaseWait') : t(next[0])} onPress={run('next', next[1])} loading={busy === 'next'} disabled={!!busy} style={styles.btn} />}
+      {next && (
+        <Button
+          title={busy === 'next' ? t('pleaseWait') : t(next[0])}
+          onPress={next[1] === 'start' ? () => setAskPrice(true) : run('next', next[1])}
+          loading={busy === 'next'}
+          disabled={!!busy}
+          style={styles.btn}
+        />
+      )}
+      <PriceModal
+        visible={askPrice}
+        busy={busy === 'next'}
+        onCancel={() => setAskPrice(false)}
+        onConfirm={async (price) => {
+          await run('next', 'start', { price })();
+          setAskPrice(false);
+        }}
+      />
       {canCancel && <Button title={t('cancelJob')} variant="link" onPress={confirmCancel} loading={busy === 'cancel'} disabled={!!busy} />}
 
       {!!error && <Text style={[styles.error, { color: colors.error }]}>{errorMessage(t, error)}</Text>}
@@ -98,7 +120,7 @@ const styles = StyleSheet.create({
   step: { flex: 1, height: 4, borderRadius: 2 },
   badge: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.8 },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 },
-  emoji: { fontSize: 34 },
+  iconBox: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   service: { fontSize: 19, fontWeight: '700' },
   muted: { fontSize: 14, marginTop: 2 },
   label: { fontSize: 12, fontWeight: '600', marginTop: 14 },

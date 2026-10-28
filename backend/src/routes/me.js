@@ -8,6 +8,7 @@ const { publicUser } = require('../lib/user');
 const { signToken } = require('../lib/token');
 const { saveAvatar, removeAvatar } = require('../services/avatar');
 const { notify } = require('../services/notify');
+const { TOKEN_RE } = require('../lib/push');
 
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 72;
@@ -25,6 +26,19 @@ const sensitiveLimiter = rateLimit({
 const fail = (res, status, code, error) => res.status(status).json({ error, code });
 const validPassword = (p) => typeof p === 'string' && p.length >= MIN_PASSWORD && p.length <= MAX_PASSWORD;
 const loadUser = (id) => db('users').where({ id }).first();
+
+// The phone's push token (called by the apps after login)
+router.put('/push-token', async (req, res, next) => {
+  try {
+    const token = req.body?.token;
+    if (token !== null && !(typeof token === 'string' && TOKEN_RE.test(token))) return fail(res, 400, 'VALIDATION', 'Bad request');
+    if (token) await db('users').where({ push_token: token }).whereNot({ id: req.user.id }).update({ push_token: null }); // one phone, one account
+    await db('users').where({ id: req.user.id }).update({ push_token: token });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/', async (req, res, next) => {
   try {

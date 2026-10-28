@@ -21,7 +21,7 @@ import {
   validatePhone,
 } from '../utils/validation';
 
-// Login only. "Register" opens the worker sign-up (names, NIDA, questions, fingerprint).
+// Login only. "Register" opens the worker sign-up (names, NIDA, questions).
 export default function AuthScreen({ onSignup }) {
   const { colors, t } = useSettings();
   const { login, register } = useAuth();
@@ -109,7 +109,7 @@ export default function AuthScreen({ onSignup }) {
           <Field
             label={t('phone')}
             icon={<PhoneIcon size={20} color={colors.textMuted} />}
-            prefix="🇹🇿 +255"
+            prefix="+255"
             value={phone}
             onChangeText={(v) => setPhone(onlyDigits(v))}
             placeholder="795259567"

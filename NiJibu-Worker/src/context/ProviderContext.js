@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { updateProfile } from '../api/me';
 import * as providerApi from '../api/provider';
 import { clearDraft, loadDraft } from '../signup/draft';
@@ -13,7 +13,16 @@ export function ProviderProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
+  // Keep the latest values in refs, so `load` stays the same function when only a setting
+  // (language, theme) changes the user object. Before, that reloaded everything and sent the fundi home.
+  const userRef = useRef(user);
+  userRef.current = user;
+  const updateUserRef = useRef(updateUser);
+  updateUserRef.current = updateUser;
+
   const load = useCallback(async () => {
+    const user = userRef.current;
+    const updateUser = updateUserRef.current;
     if (!token || !user) return null;
     try {
       let r = await providerApi.getProvider(token);
@@ -32,17 +41,19 @@ export function ProviderProvider({ children }) {
       setLoadError(e.code || 'UNKNOWN');
       return null;
     }
-  }, [token, user, updateUser]);
+  }, [token]);
 
+  // Load only when a different account logs in (not when the same user changes a setting)
+  const userId = user?.id ?? null;
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       setProvider(null);
       setLoading(true);
       return;
     }
     setLoading(true);
     load().finally(() => setLoading(false));
-  }, [user, load]);
+  }, [userId, load]);
 
   // Each call throws ApiError on failure (the screen shows the message) and returns the new provider.
   const run = useCallback(
@@ -70,7 +81,14 @@ export function ProviderProvider({ children }) {
         return r.provider;
       },
       submitNida: run(providerApi.submitNida),
-      verifyNidaFingerprint: run(providerApi.verifyNidaFingerprint),
+      // Questions passed: link the NIDA number to this account (names come from the saved profile)
+      verifyNidaQuestions: async ({ nidaNumber }) => {
+        const [firstName, ...rest] = String(provider?.full_name || '').trim().split(/\s+/);
+        const lastName = rest.pop() || firstName;
+        const r = await providerApi.submitIdentity(token, { firstName, middleName: rest.join(' '), lastName, email: '', nidaNumber });
+        setProvider(r.provider);
+        return r.provider;
+      },
       savePayout: run(providerApi.savePayout),
     }),
     [provider, loading, loadError, load, run, token, updateUser]

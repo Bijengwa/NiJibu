@@ -1,9 +1,10 @@
+import { TEST_MODE } from '../config';
 import { formatDob, validateAnswer as validateText, validateDob, validateNamePart } from '../utils/validation';
 
 // Questions that NIDA keeps in its record. The fundi gets a few at random, one at a time.
 // A real server picks the questions and keeps the count, so the app cannot cheat.
 export const NEED = 5; // correct answers in a row to pass
-export const MAX = 8; // most questions one fundi can attempt
+export const MAX = TEST_MODE ? 6 : 8; // most questions one fundi can attempt (demo: 6 = 1 wrong + 5 right, same as the server)
 
 export const POOL = [
   { id: 'dob', type: 'date', label: 'nidaDob' },

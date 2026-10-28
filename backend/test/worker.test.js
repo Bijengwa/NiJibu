@@ -51,20 +51,19 @@ const match = (nida = NIDA, over = {}) =>
   api(null, 'POST', '/api/provider/identity/match', { nida_number: nida, first_name: 'Asha', last_name: 'Juma', phone: '799900101', ...over });
 const answer = (nida, id, a) => api(null, 'POST', '/api/provider/identity/answer', { nida_number: nida, question_id: id, answer: a });
 
-test('identity check: match rules, 5 in a row passes, link verifies (mock)', async () => {
+test('identity check (demo): question 1 is wrong, then 5 right in a row passes on question 6', async () => {
   assert.equal((await match(NIDA, { last_name: 'Nomatch' })).body.code, 'NIDA_NAME_MISMATCH');
   assert.equal((await match(NIDA, { phone: '700000000' })).body.code, 'NIDA_PHONE_MISMATCH');
-  assert.equal((await match('12345678901234567890')).body.code, 'NIDA_NOT_FOUND');
-  assert.equal((await answer(NIDA, 'dob', '12031995')).body.code, 'IDENTITY_NOT_VERIFIED'); // no match yet
+  assert.equal((await match('1234')).body.code, 'VALIDATION');
 
-  assert.equal((await match()).status, 200);
-  assert.equal((await answer(NIDA, 'dob', '01011990')).body.correct, false); // wrong date of birth
+  // no separate match step is needed before the questions (the details screen starts straight at the questions)
+  assert.equal((await answer(NIDA, 'dob', '12/03/1995')).body.correct, false); // question 1 is always wrong
   for (let i = 0; i < 4; i++) assert.equal((await answer(NIDA, 'motherFirst', 'Neema')).body.correct, true);
-  // streak was reset by the wrong answer: 4 in a row is not a pass yet -> linking is refused
+  // 4 in a row is not a pass yet -> linking is refused
   const user = await makeUser(PHONES[0], 'Asha Juma');
   let link = await api(user, 'POST', '/api/provider/identity', { nida_number: NIDA, first_name: 'Asha', last_name: 'Juma' });
   assert.equal(link.body.code, 'IDENTITY_NOT_VERIFIED');
-  assert.equal((await answer(NIDA, 'dob', '12/03/1995')).body.correct, true);
+  assert.equal((await answer(NIDA, 'dob', '12/03/1995')).body.correct, true); // question 6: 5th right in a row
   link = await api(user, 'POST', '/api/provider/identity', { nida_number: NIDA, first_name: 'Asha', middle_name: 'M', last_name: 'Juma' });
   assert.equal(link.status, 200);
   assert.equal(link.body.provider.status, 'verified');
@@ -75,14 +74,13 @@ test('identity check: match rules, 5 in a row passes, link verifies (mock)', asy
   assert.ok(row.nida_enc && !row.nida_enc.includes(NIDA));
 });
 
-test('identity check: 8 questions without 5 in a row locks for 24 h', async () => {
+test('identity check (demo): a second wrong answer makes 5 in a row impossible and locks for 24 h', async () => {
   assert.equal((await match(NIDA2)).status, 200);
-  let last;
-  for (let i = 0; i < 4; i++) last = await answer(NIDA2, 'motherFirst', 'wrong');
-  assert.equal(last.status, 200);
-  // after 4 wrong answers 5-in-a-row is no longer reachable (8 - 4 < 5): the server locks
-  last = await answer(NIDA2, 'motherFirst', 'Neema');
-  assert.equal(last.body.code, 'IDENTITY_LOCKED');
+  assert.equal((await answer(NIDA2, 'motherFirst', 'Neema')).body.correct, false); // question 1: always wrong
+  const second = await answer(NIDA2, 'motherFirst', 'wrong'); // question 2: wrong again -> 4 left, 5 needed
+  assert.equal(second.status, 200);
+  assert.equal(second.body.correct, false);
+  assert.equal((await answer(NIDA2, 'motherFirst', 'Neema')).body.code, 'IDENTITY_LOCKED');
   assert.equal((await match(NIDA2)).body.code, 'IDENTITY_LOCKED');
 });
 

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as jobsApi from '../api/jobs';
 import { getCoords, watchCoords } from '../location/geo';
+import { registerPush } from '../push';
 import { connectSocket } from '../realtime';
 import { useAuth } from './AuthContext';
 import { useProvider } from './ProviderContext';
@@ -20,6 +21,7 @@ export function JobsProvider({ children }) {
   const [offers, setOffers] = useState([]);
   const [active, setActive] = useState(null); // my current job (full request view) or null
   const [jobs, setJobs] = useState([]);
+  const [totals, setTotals] = useState({ received: 0, on_the_way: 0, waiting_customer: 0 });
   const [position, setPosition] = useState(null);
   const [error, setError] = useState('');
 
@@ -33,7 +35,9 @@ export function JobsProvider({ children }) {
   // ---- loading ----
   const loadJobs = useCallback(async () => {
     try {
-      setJobs((await jobsApi.listJobs(token)).items);
+      const r = await jobsApi.listJobs(token);
+      setJobs(r.items);
+      if (r.totals) setTotals(r.totals);
     } catch {}
   }, [token]);
 
@@ -98,6 +102,11 @@ export function JobsProvider({ children }) {
     if (onlineRef.current || activeRef.current) startWatch(tripMode ? 'trip' : 'idle').catch(() => {});
   }, [tripMode, startWatch, online, active?.id]);
 
+  // Phone alerts for new requests, also when the app is closed
+  useEffect(() => {
+    if (token) registerPush(token);
+  }, [token]);
+
   // ---- socket ----
   useEffect(() => {
     if (!token) return;
@@ -131,7 +140,7 @@ export function JobsProvider({ children }) {
         setPosition(c);
         await jobsApi.sendLocation(token, c);
       } catch {}
-    }, 45000);
+    }, 30000);
     return () => clearInterval(id);
   }, [online, token]);
 
@@ -147,7 +156,7 @@ export function JobsProvider({ children }) {
         setPosition(here);
         onlineRef.current = true;
         setOnlineState(true);
-        await startWatch('idle');
+        startWatch('idle').catch(() => {});
       } catch {
         jobsApi.setOffline(token).catch(() => {});
       }
@@ -165,7 +174,7 @@ export function JobsProvider({ children }) {
         setPosition(here);
         onlineRef.current = true;
         setOnlineState(true);
-        await startWatch('idle');
+        startWatch('idle').catch(() => {}); // do not wait: the switch is already on
         loadOffers();
       } else {
         await jobsApi.setOffline(token);
@@ -179,6 +188,22 @@ export function JobsProvider({ children }) {
       }
     },
     [token, startWatch, stopWatch, loadOffers]
+  );
+
+  // The fundi answers "did you receive the money?"
+  const confirmReceived = useCallback(
+    async (requestId) => {
+      await jobsApi.confirmReceived(token, requestId);
+      await loadJobs();
+    },
+    [token, loadJobs]
+  );
+  const complain = useCallback(
+    async (requestId, note) => {
+      await jobsApi.fileComplaint(token, requestId, note);
+      await loadJobs();
+    },
+    [token, loadJobs]
   );
 
   const accept = useCallback(
@@ -207,10 +232,10 @@ export function JobsProvider({ children }) {
 
   // stage: 'on-the-way' | 'arrived' | 'start' | 'complete' | 'cancel'
   const move = useCallback(
-    async (stage) => {
+    async (stage, body) => {
       const job = activeRef.current;
       if (!job) return;
-      const { request } = await jobsApi.moveStage(token, job.id, stage);
+      const { request } = await jobsApi.moveStage(token, job.id, stage, body);
       if (BUSY.includes(request.status)) setActive(request);
       else {
         setActive(null);
@@ -223,8 +248,8 @@ export function JobsProvider({ children }) {
   );
 
   const value = useMemo(
-    () => ({ online, position, setOnline, offers, active, jobs, error, refresh, accept, decline, move }),
-    [online, position, setOnline, offers, active, jobs, error, refresh, accept, decline, move]
+    () => ({ online, position, setOnline, offers, active, jobs, totals, error, refresh, accept, decline, move, confirmReceived, complain }),
+    [online, position, setOnline, offers, active, jobs, totals, error, refresh, accept, decline, move, confirmReceived, complain]
   );
 
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;

@@ -54,7 +54,7 @@ export default function PayoutScreen({ onDone, onBack }) {
       <Field
         label={t('payoutNumber')}
         icon={<PhoneIcon size={20} color={colors.textMuted} />}
-        prefix="🇹🇿 +255"
+        prefix="+255"
         value={number}
         onChangeText={(v) => {
           setNumber(onlyDigits(v));

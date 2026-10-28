@@ -10,7 +10,6 @@ const { requireAuth } = require('../middleware/auth');
 const { validLat, validLng } = require('../lib/geo');
 const { providerView } = require('../lib/providerView');
 const secret = require('../lib/secret');
-const nida = require('../services/nida');
 
 const NIDA_DIR = path.join(__dirname, '../../private/nida'); // never served as static files
 const MAX_SERVICES = 5;
@@ -148,31 +147,16 @@ router.post('/nida', upload.fields([{ name: 'selfie', maxCount: 1 }, { name: 'id
   }
 });
 
-// Fingerprint check against NIDA (test mode: always matches; real NIDA is not connected yet)
-router.post('/nida/fingerprint', async (req, res, next) => {
-  try {
-    const number = req.body?.nida_number;
-    if (!/^\d{20}$/.test(number || '')) return bad(res);
-    const p = await db('provider_profiles').where({ user_id: req.user.id }).first();
-    if (!p) return bad(res, 'Save your details first');
-    await nida.fingerprint(number);
-    const me = await db('users').where({ id: req.user.id }).first('name');
-    await db('provider_profiles').where({ id: p.id }).update({
-      nida_submitted: true, nida_enc: secret.encrypt(number), nida_hash: secret.hash(number), nida_name: nida.nameFor(me.name),
-      verification_status: 'verified', verified_at: db.fn.now(), rejection_reason: null,
-    });
-    res.json({ provider: await providerView(req.user.id) });
-  } catch (e) {
-    next(e);
-  }
-});
-
 router.put('/payout', async (req, res, next) => {
   try {
     const { network, number } = req.body || {};
     if (!NETWORKS.includes(network) || !/^\d{9}$/.test(String(number || ''))) return bad(res);
     const n = await db('provider_profiles').where({ user_id: req.user.id }).update({ payout_network: network, payout_number: String(number) });
     if (!n) return bad(res, 'Save your details first');
+    // Money that was waiting for these details goes out now
+    const me = await db('provider_profiles').where({ user_id: req.user.id }).first('id');
+    const waiting = await db('payouts').where({ provider_id: me.id }).whereIn('status', ['pending', 'failed']).pluck('payment_id');
+    for (const pid of waiting) await require('../services/payments').sendPayout(pid);
     res.json({ provider: await providerView(req.user.id) });
   } catch (e) {
     next(e);

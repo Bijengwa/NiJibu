@@ -218,3 +218,31 @@ export const StarIcon = ({ color, ...p }) => (
     <Path fill={color} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
   </Icon>
 );
+
+export const WalletIcon = (p) => (
+  <Icon {...p}>
+    <Rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+    <Line x1="1" y1="10" x2="23" y2="10" />
+  </Icon>
+);
+
+export const MapPinIcon = (p) => (
+  <Icon {...p}>
+    <Path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+    <Circle cx="12" cy="10" r="3" />
+  </Icon>
+);
+
+export const MapIcon = (p) => (
+  <Icon {...p}>
+    <Path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z" />
+    <Path d="M8 2v16" />
+    <Path d="M16 6v16" />
+  </Icon>
+);
+
+export const EditIcon = (p) => (
+  <Icon {...p}>
+    <Path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+  </Icon>
+);

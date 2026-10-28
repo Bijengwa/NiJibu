@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
-import { emojiOf, labelOf } from '../data/services';
+import { labelOf } from '../data/services';
+import ServiceIcon from './ServiceIcon';
 import { errorMessage } from '../utils/errors';
 import Button from './Button';
 import { LockIcon } from './Icons';
@@ -34,7 +35,9 @@ export default function OfferCard({ offer, now, onAccept, onDecline }) {
       </View>
 
       <View style={styles.head}>
-        <Text style={styles.emoji}>{emojiOf(offer.service.slug)}</Text>
+        <View style={[styles.iconBox, { backgroundColor: colors.background }]}>
+          <ServiceIcon slug={offer.service.slug} size={28} color={colors.primary} />
+        </View>
         <View style={{ flex: 1 }}>
           <Text style={[styles.service, { color: colors.text }]}>{labelOf(offer.service, lang)}</Text>
           {!!offer.address && <Text style={[styles.muted, { color: colors.textMuted }]} numberOfLines={2}>{offer.address}</Text>}
@@ -63,7 +66,7 @@ const styles = StyleSheet.create({
   badge: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.8 },
   timer: { fontSize: 16, fontWeight: '800' },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 },
-  emoji: { fontSize: 34 },
+  iconBox: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   service: { fontSize: 19, fontWeight: '700' },
   muted: { fontSize: 14, marginTop: 2 },
   km: { fontSize: 15, fontWeight: '700' },

@@ -116,7 +116,7 @@ export function RequestProvider({ children }) {
         setRequest(r.request);
         return r.request;
       } catch (e) {
-        if (e.code === 'ALREADY_OPEN') await syncOpen();
+        if (e.code === 'ALREADY_OPEN' || e.code === 'PAYMENT_DUE') await syncOpen();
         throw e;
       }
     },
@@ -139,10 +139,13 @@ export function RequestProvider({ children }) {
   );
 
   const dismiss = useCallback(() => setRequest(null), []);
+  const reload = useCallback(() => {
+    if (requestRef.current) fetchOne(requestRef.current.id);
+  }, [fetchOne]);
 
   const value = useMemo(
-    () => ({ request, restoring, open, create, cancel, dismiss, connected }),
-    [request, restoring, open, create, cancel, dismiss, connected]
+    () => ({ request, restoring, open, create, cancel, dismiss, reload, connected }),
+    [request, restoring, open, create, cancel, dismiss, reload, connected]
   );
   return <RequestContext.Provider value={value}>{children}</RequestContext.Provider>;
 }

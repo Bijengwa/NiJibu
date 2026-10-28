@@ -5,22 +5,20 @@ import Field from '../components/Field';
 import FormScreen from '../components/FormScreen';
 import IdentityQuiz from '../components/IdentityQuiz';
 import { EyeIcon, EyeOffIcon, LockIcon, MailIcon, PhoneIcon, ShieldCheckIcon } from '../components/Icons';
-import { FingerprintIcon } from '../components/WorkerIcons';
 import { matchNida } from '../api/provider';
 import { TEST_MODE } from '../config';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { saveDraft } from '../signup/draft';
 import { errorMessage } from '../utils/errors';
-import { scanFingerprint } from '../utils/fingerprint';
 import {
   formatNida, onlyDigits, onlyNidaDigits, validateConfirm, validateEmail, validateNamePart,
   validateNida, validatePassword, validatePhone,
 } from '../utils/validation';
 
-// Sign-up for a fundi (3 steps), before the account exists:
+// Sign-up for a fundi (2 steps), before the account exists:
 //   1 names + phone + email + NIDA number + password (NIDA must match the names and the phone)
-//   2 NIDA questions, one at a time (5 right in a row, at most 8)   3 fingerprint
+//   2 NIDA questions, one at a time (demo: 6 questions, 5 right in a row)
 // Then the phone code is asked (VerifyScreen). onCancel goes back to the login.
 export default function WorkerSignupScreen({ onCancel }) {
   const { colors, t } = useSettings();
@@ -74,18 +72,12 @@ export default function WorkerSignupScreen({ onCancel }) {
     }
   };
 
-  // Step 3: fingerprint -> create the account (the code is sent to the phone)
+  // After the questions are passed: create the account (the code is sent to the phone)
   const finish = async () => {
     if (loading) return;
     setErrors({});
     setLoading(true);
     try {
-      const code = await scanFingerprint(t);
-      if (code) {
-        setErrors({ form: code });
-        setLoading(false);
-        return;
-      }
       setChecking(true);
       await saveDraft({
         phone: v.phone,
@@ -116,14 +108,14 @@ export default function WorkerSignupScreen({ onCancel }) {
 
   if (step === 1) {
     return (
-      <FormScreen step={1} steps={3} title={t('signupTitle')} subtitle={t('signupSub')} onBack={back}>
+      <FormScreen step={1} steps={2} title={t('signupTitle')} subtitle={t('signupSub')} onBack={back}>
         <Field label={t('firstName')} value={v.firstName} onChangeText={(x) => set('firstName', x)} autoCapitalize="words"
           returnKeyType="next" onSubmitEditing={() => refs.middle.current?.focus()} error={err('firstName')} />
         <Field label={t('middleName')} inputRef={refs.middle} value={v.middleName} onChangeText={(x) => set('middleName', x)}
           autoCapitalize="words" returnKeyType="next" onSubmitEditing={() => refs.last.current?.focus()} error={err('middleName')} />
         <Field label={t('lastName')} inputRef={refs.last} value={v.lastName} onChangeText={(x) => set('lastName', x)}
           autoCapitalize="words" returnKeyType="next" onSubmitEditing={() => refs.phone.current?.focus()} error={err('lastName')} />
-        <Field label={t('phone')} inputRef={refs.phone} icon={<PhoneIcon size={20} color={colors.textMuted} />} prefix="🇹🇿 +255"
+        <Field label={t('phone')} inputRef={refs.phone} icon={<PhoneIcon size={20} color={colors.textMuted} />} prefix="+255"
           value={v.phone} onChangeText={(x) => set('phone', onlyDigits(x))} placeholder="795259567" keyboardType="number-pad"
           maxLength={9} autoComplete="tel" error={err('phone')} />
         <Field label={t('email')} inputRef={refs.email} icon={<MailIcon size={20} color={colors.textMuted} />} value={v.email}
@@ -153,37 +145,28 @@ export default function WorkerSignupScreen({ onCancel }) {
 
   if (step === 2) {
     return (
-      <FormScreen step={2} steps={3} title={t('quizTitle')} subtitle={t('quizSub')}>
-        <IdentityQuiz nidaNumber={nida} onPass={() => setStep(3)} onExit={onCancel} />
+      <FormScreen step={2} steps={2} title={t('quizTitle')} subtitle={t('quizSub')}>
+        <IdentityQuiz nidaNumber={nida} onPass={() => { setStep(3); finish(); }} onExit={onCancel} />
       </FormScreen>
     );
   }
 
+  // Step 3: creating the account (no screen to fill; if it fails the fundi can try again)
   return (
-    <FormScreen step={3} steps={3} title={t('signupFingerTitle')} subtitle={t('signupFingerSub')} onBack={loading ? undefined : () => setStep(1)}>
+    <FormScreen step={2} steps={2} title={t('signupCreatingTitle')} subtitle={t('signupFingerSub')} onBack={loading ? undefined : () => setStep(1)}>
       <View style={styles.center}>
-        <Pressable onPress={finish} disabled={loading} accessibilityRole="button" accessibilityLabel={t('fingerButton')}
-          style={({ pressed }) => [styles.finger, { backgroundColor: colors.surface, borderColor: colors.primary, opacity: pressed || loading ? 0.7 : 1 }]}>
-          {checking ? <ActivityIndicator size="large" color={colors.primary} /> : <FingerprintIcon size={64} color={colors.primary} strokeWidth={1.6} />}
-        </Pressable>
-        <Text style={[styles.fingerLabel, { color: colors.text }]}>{checking ? t('nidaChecking') : t('fingerButton')}</Text>
-        <Text style={[styles.fingerHelp, { color: colors.textMuted }]}>{t('fingerHelp')}</Text>
+        {checking ? <ActivityIndicator size="large" color={colors.primary} /> : null}
+        <Text style={[styles.fingerLabel, { color: colors.text }]}>{checking ? t('nidaChecking') : ''}</Text>
       </View>
       {formError}
-      {TEST_MODE && (
-        <View style={[styles.note, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 24 }]}>
-          <Text style={[styles.noteText, { color: colors.textMuted }]}>{t('nidaDemoNote')}</Text>
-        </View>
-      )}
+      {!loading && !!errors.form && <Button title={t('tryAgain')} onPress={finish} style={{ marginTop: 20 }} />}
     </FormScreen>
   );
 }
 
 const styles = StyleSheet.create({
   center: { alignItems: 'center', marginTop: 28 },
-  finger: { width: 132, height: 132, borderRadius: 66, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   fingerLabel: { fontSize: 17, fontWeight: '700', marginTop: 14 },
-  fingerHelp: { fontSize: 14, marginTop: 4, textAlign: 'center' },
   formError: { fontSize: 14, textAlign: 'center', marginTop: 16 },
   note: { borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 16 },
   noteText: { fontSize: 13 },

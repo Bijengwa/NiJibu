@@ -1,6 +1,8 @@
-import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useState } from 'react';
+import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import Constants from 'expo-constants';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ConfirmModal from '../components/ConfirmModal';
 import { BellIcon, LockIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon, TrashIcon } from '../components/Icons';
 import Row from '../components/Row';
 import ScreenHeader from '../components/ScreenHeader';
@@ -32,11 +34,7 @@ export default function SettingsScreen({ onBack, onOpen }) {
   const { logout } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const confirmLogout = () =>
-    Alert.alert(t('logoutConfirmTitle'), t('logoutConfirmBody'), [
-      { text: t('cancel'), style: 'cancel' },
-      { text: t('logout'), style: 'destructive', onPress: logout },
-    ]);
+  const [askLogout, setAskLogout] = useState(false);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -91,7 +89,7 @@ export default function SettingsScreen({ onBack, onOpen }) {
         </Section>
 
         <Section title={t('accountSection')}>
-          <Row icon={(c) => <LogOutIcon size={22} color={c} />} label={t('logout')} danger onPress={confirmLogout} />
+          <Row icon={(c) => <LogOutIcon size={22} color={c} />} label={t('logout')} danger onPress={() => setAskLogout(true)} />
           <Row icon={(c) => <TrashIcon size={22} color={c} />} label={t('deleteAccount')} danger last onPress={() => onOpen('deleteAccount')} />
         </Section>
 
@@ -99,6 +97,21 @@ export default function SettingsScreen({ onBack, onOpen }) {
           NiJibu · {t('version')} {Constants.expoConfig?.version ?? '1.0.0'}
         </Text>
       </ScrollView>
+
+      <ConfirmModal
+        visible={askLogout}
+        danger
+        Icon={LogOutIcon}
+        title={t('logoutConfirmTitle')}
+        body={t('logoutConfirmBody')}
+        confirmLabel={t('logout')}
+        cancelLabel={t('cancel')}
+        onCancel={() => setAskLogout(false)}
+        onConfirm={() => {
+          setAskLogout(false);
+          logout();
+        }}
+      />
     </View>
   );
 }

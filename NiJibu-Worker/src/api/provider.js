@@ -4,7 +4,6 @@ import { request } from './client';
 //   GET  /api/provider          -> { provider }   (status, details, nida_submitted, payout_set, is_online)
 //   PUT  /api/provider          body: { services[] (slugs), lat, lng, experience, availability }
 //   POST /api/provider/nida     multipart: nida_number, selfie, id_photo   (private storage, admin only)
-//   POST /api/provider/nida/fingerprint  body: { nida_number }   (test mode only until the NIDA service is connected)
 //   PUT  /api/provider/payout   body: { network, number }
 //   POST /api/provider/identity/match | /answer   (sign-up check, before the account exists)
 //   POST /api/provider/identity                   (after the phone code: links the checked NIDA to the account)
@@ -29,9 +28,6 @@ export const submitNida = (token, { nidaNumber, selfie, idPhoto }) => {
   form.append('id_photo', file(idPhoto, 'id'));
   return request('/api/provider/nida', { method: 'POST', token, body: form, timeout: 60000 });
 };
-
-export const verifyNidaFingerprint = (token, { nidaNumber }) =>
-  request('/api/provider/nida/fingerprint', { method: 'POST', token, body: { nida_number: nidaNumber }, timeout: 30000 });
 
 // Do the NIDA number, the names and the phone belong to the same person in NIDA?
 // errors: NIDA_NOT_FOUND, NIDA_NAME_MISMATCH, NIDA_PHONE_MISMATCH, IDENTITY_LOCKED
