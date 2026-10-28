@@ -120,7 +120,7 @@ export default function NidaScreen({ onBack, onDone }) {
 
   if (mode === 'finger') {
     return (
-      <FormScreen title={t('signupFingerTitle')} subtitle={t('nidaVerifySubtitle')}>
+      <FormScreen title={t('signupFingerTitle')} subtitle={t('nidaVerifySubtitle')} onBack={loading ? undefined : () => { setMode('number'); setErrors({}); }}>
         <View style={styles.center}>
           <Pressable onPress={verifyFingerprint} disabled={loading} accessibilityRole="button" accessibilityLabel={t('fingerButton')}
             style={({ pressed }) => [styles.finger, { backgroundColor: colors.surface, borderColor: colors.primary, opacity: pressed || loading ? 0.7 : 1 }]}>

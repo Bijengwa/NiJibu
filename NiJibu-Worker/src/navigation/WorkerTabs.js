@@ -8,7 +8,7 @@ import RequestsScreen from '../screens/RequestsScreen';
 
 // Tabs for a verified fundi: Requests, Jobs, Account.
 // Requests stays mounted so the online switch and the list are kept when you change tab.
-export default function WorkerTabs({ onPayout }) {
+export default function WorkerTabs({ onPayout, onEditDetails }) {
   const { colors } = useSettings();
   const [tab, setTab] = useState('requests');
 
@@ -30,7 +30,7 @@ export default function WorkerTabs({ onPayout }) {
         <RequestsScreen />
       </View>
       {tab === 'jobs' && <JobsScreen />}
-      {tab === 'account' && <AccountScreen onPayout={onPayout} />}
+      {tab === 'account' && <AccountScreen onPayout={onPayout} onEditDetails={onEditDetails} />}
       <TabBar active={tab} onChange={setTab} />
     </View>
   );

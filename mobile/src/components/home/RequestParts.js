@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Avatar from '../Avatar';
 import { CloseIcon, PhoneIcon } from '../Icons';
@@ -29,11 +29,53 @@ export function ResultsHeader({ service, count, nearestEta, loading, onClose }) 
 }
 
 // Where + what is wrong, then "Request fundi". The place is the phone's location.
-export function RequestForm({ loading, error, nearest, hasLocation, onFocus, onSubmit, onRetryLocation, submitError }) {
+//   place: the chosen place { label, lat, lng } or null (then the phone's GPS is used)
+//   onSearch(q) -> places    onPlace(place|null)    onUseGps()    onPickOnMap()    picking: waiting for a tap on the map
+export function RequestForm({ loading, error, nearest, hasLocation, onFocus, onSubmit, onRetryLocation, submitError, place, onSearch, onPlace, onUseGps, onPickOnMap, picking }) {
   const { colors, t } = useSettings();
   const [address, setAddress] = useState('');
+  const [typed, setTyped] = useState(''); // what the user typed (the search runs on this)
+  const [found, setFound] = useState(null); // null = no search yet, [] = nothing found
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // A place chosen on the map or by the GPS button fills the box
+  useEffect(() => {
+    if (place?.label) {
+      setAddress(place.label);
+      setTyped('');
+      setFound(null);
+    }
+  }, [place]);
+
+  // Search places 0.5 s after the user stops typing
+  useEffect(() => {
+    const q = typed.trim();
+    if (q.length < 3) {
+      setFound(null);
+      return undefined;
+    }
+    let alive = true;
+    const timer = setTimeout(async () => {
+      try {
+        const items = await onSearch(q);
+        if (alive) setFound(items);
+      } catch {
+        if (alive) setFound(null);
+      }
+    }, 500);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [typed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const choose = (p) => {
+    setAddress(p.label);
+    setTyped('');
+    setFound(null);
+    onPlace(p);
+  };
 
   const submit = async () => {
     if (busy || !hasLocation) return;
@@ -58,13 +100,41 @@ export function RequestForm({ loading, error, nearest, hasLocation, onFocus, onS
       <Text style={[styles.label, { color: colors.textMuted }]}>{t('whereLabel')}</Text>
       <TextInput
         value={address}
-        onChangeText={setAddress}
+        onChangeText={(v) => {
+          setAddress(v);
+          setTyped(v);
+          if (place) onPlace(null); // typing again: the chosen point is not valid any more
+        }}
         onFocus={onFocus}
         placeholder={t('addressPlaceholder')}
         placeholderTextColor={colors.textMuted}
         style={input}
         maxLength={200}
       />
+      {found && found.length > 0 ? (
+        <View style={[styles.suggest, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          {found.map((p, i) => (
+            <Pressable
+              key={`${p.lat},${p.lng},${i}`}
+              onPress={() => choose(p)}
+              style={[styles.suggestRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.suggestMain, { color: colors.text }]} numberOfLines={1}>📍 {p.label}</Text>
+              <Text style={[styles.suggestSub, { color: colors.textMuted }]} numberOfLines={1}>{p.full}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      {found && found.length === 0 ? <Text style={[styles.suggestSub, { color: colors.textMuted, marginTop: 8 }]}>{t('noPlaces')}</Text> : null}
+      <View style={styles.whereActions}>
+        <Pressable onPress={onUseGps} hitSlop={8} accessibilityRole="button">
+          <Text style={[styles.whereLink, { color: colors.primary }]}>📍 {t('useMyPlace')}</Text>
+        </Pressable>
+        <Pressable onPress={onPickOnMap} hitSlop={8} accessibilityRole="button">
+          <Text style={[styles.whereLink, { color: colors.primary }]}>🗺️ {picking ? t('tapMapHint') : t('chooseOnMap')}</Text>
+        </Pressable>
+      </View>
       <Text style={[styles.label, { color: colors.textMuted }]}>{t('noteLabel')}</Text>
       <TextInput
         value={note}
@@ -236,6 +306,12 @@ export function TripPanel({ request, service, onCancel, onDismiss, onRetry }) {
 }
 
 const styles = StyleSheet.create({
+  suggest: { borderWidth: 1, borderRadius: 12, marginTop: 6, overflow: 'hidden' },
+  suggestRow: { paddingHorizontal: 14, paddingVertical: 10 },
+  suggestMain: { fontSize: 15, fontWeight: '600' },
+  suggestSub: { fontSize: 12, marginTop: 2 },
+  whereActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, gap: 12 },
+  whereLink: { fontSize: 14, fontWeight: '700' },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headEmoji: { fontSize: 30 },
   headTitle: { fontSize: 20, fontWeight: '800' },

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, BackHandler, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Button from './src/components/Button';
@@ -36,6 +36,18 @@ function ProviderFlow() {
   const { provider, loading, loadError, refresh } = useProvider();
   const [override, setOverride] = useState(null); // 'details' | 'nida' | 'payout' | null
 
+  // Android back button: runs the back action of the screen that is open (set below on each render)
+  const backRef = useRef(null);
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!backRef.current) return false;
+      backRef.current();
+      return true;
+    });
+    return () => sub.remove();
+  }, []);
+  backRef.current = null;
+
   if (loading) return <Loading />;
 
   if (!provider) {
@@ -50,7 +62,7 @@ function ProviderFlow() {
 
   const view =
     override ??
-    (!provider.full_name || (provider.nida_submitted && !provider.services?.length)
+    (!provider.full_name || (provider.nida_submitted && !provider.services?.length && !provider.other_jobs?.length)
       ? 'details'
       : !provider.nida_submitted
         ? 'nida'
@@ -58,13 +70,22 @@ function ProviderFlow() {
           ? 'home'
           : 'status');
 
-  if (view === 'details') return <DetailsScreen onDone={() => setOverride(provider.payout_set ? null : 'payout')} />;
+  // A fundi who already has jobs can go back from the details (edit mode)
+  const hasJobs = !!(provider.services?.length || provider.other_jobs?.length);
+
+  if (view === 'details') {
+    const back = provider.nida_submitted && hasJobs ? () => setOverride(null) : null;
+    backRef.current = back;
+    return <DetailsScreen onBack={back} onDone={() => setOverride(back || provider.payout_set ? null : 'payout')} />;
+  }
 
   if (view === 'nida') {
+    // Can go back to the details only before the NIDA was sent
+    const back = provider.full_name && !provider.nida_submitted ? () => setOverride('details') : () => setOverride(null);
+    backRef.current = back;
     return (
       <NidaScreen
-        // Can go back to the details only before the NIDA was sent
-        onBack={provider.full_name && !provider.nida_submitted ? () => setOverride('details') : () => setOverride(null)}
+        onBack={back}
         onDone={(p) => setOverride(p.payout_set ? null : 'payout')}
       />
     );
@@ -72,16 +93,17 @@ function ProviderFlow() {
 
   // A verified fundi keeps the online switch and the requests while moving between Account and Payout
   if (view === 'payout' || view === 'home') {
+    if (view === 'payout') backRef.current = () => setOverride(null);
     const body =
       view === 'payout' ? (
         <PayoutScreen onDone={() => setOverride(null)} onBack={() => setOverride(null)} />
       ) : (
-        <WorkerTabs onPayout={() => setOverride('payout')} />
+        <WorkerTabs onPayout={() => setOverride('payout')} onEditDetails={() => setOverride('details')} />
       );
     return provider.status === 'verified' ? <JobsProvider>{body}</JobsProvider> : body;
   }
 
-  return <StatusScreen onRetry={() => setOverride('nida')} onPayout={() => setOverride('payout')} />;
+  return <StatusScreen onRetry={() => setOverride('nida')} onPayout={() => setOverride('payout')} onEditDetails={() => setOverride('details')} />;
 }
 
 function Root() {

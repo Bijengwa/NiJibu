@@ -12,9 +12,10 @@ const js = (v) => JSON.stringify(v).split(LS).join('\\u2028').split(PS).join('\\
 //   center: first view {lat,lng}   user: {lat,lng}|null   providers: [{id,lat,lng,emoji}]
 //   selectedId   isDark   bottomPadding: height hidden by the bottom sheet   onMarkerPress(id)
 //   target: {lat,lng}|null  where the customer waits (a request is open)
+//   pick: {lat,lng}|null  the place the customer chose for a new request   onMapPress(lat,lng): the map was tapped
 //   live: {lat,lng,emoji}|null  the fundi who is coming; the camera follows so both stay visible
 const NearbyMap = forwardRef(function NearbyMap(
-  { center, user, providers, selectedId, isDark, bottomPadding, onMarkerPress, target = null, live = null },
+  { center, user, providers, selectedId, isDark, bottomPadding, onMarkerPress, target = null, live = null, pick = null, onMapPress },
   ref
 ) {
   const web = useRef(null);
@@ -70,6 +71,19 @@ const NearbyMap = forwardRef(function NearbyMap(
     }
   }, [ready, lLat, lLng, lEmoji, tLat, tLng, call]);
 
+  // The place chosen for a new request
+  const pLat = pick?.lat;
+  const pLng = pick?.lng;
+  useEffect(() => {
+    if (!ready) return;
+    if (pLat != null) {
+      call('setPick', pLat, pLng);
+      call('recenter', pLat, pLng, pad.current);
+    } else {
+      call('clearPick');
+    }
+  }, [ready, pLat, pLng, call]);
+
   // Waiting for a fundi: show the place, close up
   useEffect(() => {
     if (ready && tLat != null && lLat == null) call('recenter', tLat, tLng, pad.current);
@@ -94,8 +108,9 @@ const NearbyMap = forwardRef(function NearbyMap(
       }
       if (msg?.type === 'ready') setReady(true);
       else if (msg?.type === 'markerPress' && typeof msg.id === 'string') onMarkerPress?.(msg.id);
+      else if (msg?.type === 'mapPress' && Number.isFinite(msg.lat) && Number.isFinite(msg.lng)) onMapPress?.(msg.lat, msg.lng);
     },
-    [onMarkerPress]
+    [onMarkerPress, onMapPress]
   );
 
   return (

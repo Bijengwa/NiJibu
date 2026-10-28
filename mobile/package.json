@@ -18,8 +18,8 @@
     "socket.io-client": "^4.8.4"
   },
   "scripts": {
-    "start": "expo start",
-    "android": "expo run:android",
+    "start": "expo start --port 8081",
+    "android": "expo run:android --port 8081",
     "ios": "expo run:ios",
     "web": "expo start --web"
   },

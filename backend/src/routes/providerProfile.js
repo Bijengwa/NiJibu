@@ -41,23 +41,71 @@ router.get('/', async (req, res, next) => {
 router.put('/', async (req, res, next) => {
   try {
     const b = req.body || {};
-    const slugs = [...new Set(Array.isArray(b.services) ? b.services : [])];
-    if (!slugs.length || slugs.length > MAX_SERVICES || !slugs.every((s) => typeof s === 'string')) return bad(res, 'Choose your services');
     if (!validLat(b.lat) || !validLng(b.lng)) return bad(res, 'Work place is required');
-    if (!EXPERIENCE.includes(b.experience) || !AVAILABILITY.includes(b.availability)) return bad(res);
-    const rows = await db('services').whereIn('slug', slugs).where({ active: true }).select('id');
-    if (rows.length !== slugs.length) return bad(res, 'Unknown service');
+
+    // Each job has its own experience and availability. Old shape (one value for all) still works.
+    const withDefaults = (i) => ({ experience: i.experience ?? b.experience, availability: i.availability ?? b.availability });
+    const listed = (Array.isArray(b.services) ? b.services : []).map((i) => (typeof i === 'string' ? { key: i } : i || {}));
+    const typed = (Array.isArray(b.other_jobs) ? b.other_jobs : []).map((i) => (typeof i === 'string' ? { name: i } : i || {}));
+
+    const jobs = [];
+    const seen = new Set();
+    for (const i of listed) {
+      if (typeof i.key !== 'string' || seen.has(i.key)) continue;
+      seen.add(i.key);
+      jobs.push({ key: i.key, ...withDefaults(i) });
+    }
+    const others = [];
+    const seenNames = new Set();
+    for (const i of typed) {
+      const name = str(i.name, 80)?.replace(/\s+/g, ' ');
+      if (!name || seenNames.has(name.toLowerCase())) continue;
+      seenNames.add(name.toLowerCase());
+      others.push({ name, ...withDefaults(i) });
+    }
+    if (!jobs.length && !others.length) return bad(res, 'Choose your services');
+    if (jobs.length + others.length > MAX_SERVICES) return bad(res, 'Too many services');
+    if (![...jobs, ...others].every((j) => EXPERIENCE.includes(j.experience) && AVAILABILITY.includes(j.availability))) return bad(res);
+
+    const rows = jobs.length ? await db('services').whereIn('slug', jobs.map((j) => j.key)).where({ active: true }).select('id', 'slug') : [];
+    if (rows.length !== jobs.length) return bad(res, 'Unknown service');
 
     await db.transaction(async (trx) => {
+      const first = jobs[0] || others[0];
       let p = await trx('provider_profiles').where({ user_id: req.user.id }).first();
       const fields = {
-        work_lat: b.lat, work_lng: b.lng, experience: b.experience, availability: b.availability,
+        work_lat: b.lat, work_lng: b.lng, experience: first.experience, availability: first.availability,
         region: str(b.region, 60), district: str(b.district, 60), ward: str(b.ward, 60),
       };
       if (p) await trx('provider_profiles').where({ id: p.id }).update(fields);
       else [p] = await trx('provider_profiles').insert({ user_id: req.user.id, ...fields }).returning('*');
+
+      const idOf = Object.fromEntries(rows.map((r) => [r.slug, r.id]));
       await trx('provider_services').where({ provider_id: p.id }).del();
-      await trx('provider_services').insert(rows.map((r) => ({ provider_id: p.id, service_id: r.id })));
+      if (jobs.length) {
+        await trx('provider_services').insert(
+          jobs.map((j) => ({ provider_id: p.id, service_id: idOf[j.key], experience: j.experience, availability: j.availability }))
+        );
+      }
+
+      // Jobs typed by hand wait for an admin. A name already in the list is simply added to the jobs.
+      await trx('service_suggestions').where({ provider_id: p.id, status: 'pending' }).del();
+      for (const o of others) {
+        const match = await trx('services')
+          .where({ active: true })
+          .whereRaw('(lower(name_sw) = ? or lower(name_en) = ?)', [o.name.toLowerCase(), o.name.toLowerCase()])
+          .first('id');
+        if (match) {
+          await trx('provider_services')
+            .insert({ provider_id: p.id, service_id: match.id, experience: o.experience, availability: o.availability })
+            .onConflict(['provider_id', 'service_id'])
+            .ignore();
+        } else {
+          const old = await trx('service_suggestions').where({ provider_id: p.id }).whereRaw('lower(name) = ?', [o.name.toLowerCase()]).first('id');
+          if (old) await trx('service_suggestions').where({ id: old.id }).update({ experience: o.experience, availability: o.availability, status: 'pending' });
+          else await trx('service_suggestions').insert({ provider_id: p.id, name: o.name, experience: o.experience, availability: o.availability });
+        }
+      }
     });
     res.json({ provider: await providerView(req.user.id) });
   } catch (e) {

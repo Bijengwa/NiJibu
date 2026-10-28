@@ -53,6 +53,7 @@ export function buildMapHtml({ center, isDark }) {
   var pinEls = {};
   var selectedId = null;
   var targetMarker = null;
+  var pickMarker = null;
   var liveMarker = null;
   var tracked = false;
 
@@ -167,6 +168,19 @@ export function buildMapHtml({ center, isDark }) {
       }
     },
 
+    // The place the customer chose by tapping the map or from the search list
+    setPick: function (lat, lng) {
+      if (!pickMarker) {
+        var icon = L.divIcon({ className: '', html: '<div class="target"></div>', iconSize: [26, 26], iconAnchor: [13, 13] });
+        pickMarker = L.marker([lat, lng], { icon: icon, interactive: false, keyboard: false, zIndexOffset: 600 }).addTo(map);
+      } else {
+        pickMarker.setLatLng([lat, lng]);
+      }
+    },
+    clearPick: function () {
+      if (pickMarker) { map.removeLayer(pickMarker); pickMarker = null; }
+    },
+
     recenter: function (lat, lng, padBottom) {
       var v = viewFor([lat, lng], 16, padBottom);
       map.flyTo(v.center, v.zoom, { duration: 0.6 });
@@ -174,7 +188,7 @@ export function buildMapHtml({ center, isDark }) {
   };
   window.api = api;
 
-  map.on('click', function () { send({ type: 'mapPress' }); });
+  map.on('click', function (e) { send({ type: 'mapPress', lat: e.latlng.lat, lng: e.latlng.lng }); });
   api.setTheme(${isDark ? 'true' : 'false'});
   send({ type: 'ready' });
 })();

@@ -26,6 +26,7 @@ import {
 } from '../components/home/SearchParts';
 import { availability } from '../api/services';
 import { useAuth } from '../context/AuthContext';
+import { searchPlaces, reversePlace } from '../api/places';
 import { useRequest } from '../context/RequestContext';
 import { useServices } from '../context/ServicesContext';
 import { useSettings } from '../context/SettingsContext';
@@ -56,6 +57,8 @@ export default function HomeScreen({ active = true }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [submitError, setSubmitError] = useState('');
+  const [place, setPlace] = useState(null); // the place chosen for the request { label, lat, lng }; null = use the GPS
+  const [picking, setPicking] = useState(false); // waiting for a tap on the map
   const mapRef = useRef(null);
   const requestId = useRef(0);
 
@@ -135,6 +138,8 @@ export default function HomeScreen({ active = true }) {
     setLoading(false);
     setError('');
     setSubmitError('');
+    setPlace(null);
+    setPicking(false);
     setMode('browse');
     setSnap('half');
   }, []);
@@ -143,7 +148,7 @@ export default function HomeScreen({ active = true }) {
   const submitRequest = useCallback(
     async ({ address, note }) => {
       setSubmitError('');
-      const c = (await loc.locate()) || loc.coords;
+      const c = place || (await loc.locate()) || loc.coords;
       if (!c) {
         setSubmitError('LOCATION_DENIED');
         return;
@@ -156,7 +161,42 @@ export default function HomeScreen({ active = true }) {
         else setSubmitError(e.code || 'UNKNOWN');
       }
     },
-    [loc, service, create, clearResults]
+    [loc, service, create, clearResults, place]
+  );
+
+  // "Where are you?": the box, the search list, the GPS button and the map tap all end in setPlace
+  const findPlaces = useCallback(async (q) => (await searchPlaces(token, q, center)).items, [token, center.lat, center.lng]);
+  const useGpsPlace = useCallback(async () => {
+    setPicking(false);
+    setPlace(null);
+    const c = (await loc.locate()) || loc.coords;
+    if (!c) return;
+    mapRef.current?.recenter(c);
+    try {
+      const { place: p } = await reversePlace(token, c);
+      if (p) setPlace({ label: p.label, lat: c.lat, lng: c.lng });
+    } catch {
+      // no name found: the GPS point is still used
+    }
+  }, [loc, token]);
+  const startPicking = useCallback(() => {
+    setPicking(true);
+    setSnap('collapsed'); // show the map
+  }, []);
+  const onMapPress = useCallback(
+    async (lat, lng) => {
+      if (!picking) return;
+      setPicking(false);
+      setSnap('half');
+      setPlace({ label: '', lat, lng });
+      try {
+        const { place: p } = await reversePlace(token, { lat, lng });
+        setPlace({ label: p?.label || '', lat, lng });
+      } catch {
+        // keep the tapped point without a name
+      }
+    },
+    [picking, token]
   );
 
   // After "no fundi" or a cancel: close the trip and go back to the same service
@@ -235,11 +275,17 @@ export default function HomeScreen({ active = true }) {
           loading={loading}
           error={error}
           nearest={avail?.nearest_km ?? null}
-          hasLocation={loc.status === 'granted' && !!loc.coords}
+          hasLocation={!!place || (loc.status === 'granted' && !!loc.coords)}
           onFocus={() => setSnap('expanded')}
           onSubmit={submitRequest}
           onRetryLocation={() => (loc.status === 'denied' ? Linking.openSettings() : loc.locate())}
           submitError={submitError}
+          place={place}
+          picking={picking}
+          onSearch={findPlaces}
+          onPlace={setPlace}
+          onUseGps={useGpsPlace}
+          onPickOnMap={startPicking}
         />
       );
     }
@@ -266,6 +312,8 @@ export default function HomeScreen({ active = true }) {
           bottomPadding={mapPadding}
           target={target}
           live={live}
+          pick={mode === 'results' && !request ? place : null}
+          onMapPress={onMapPress}
         />
 
         {locationBanner && (

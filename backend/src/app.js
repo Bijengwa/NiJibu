@@ -33,6 +33,7 @@ app.use('/api/services', require('./routes/services'));
 app.use('/api/provider/identity', require('./routes/identity'));
 app.use('/api/provider', require('./routes/providerProfile'));
 app.use('/api/provider', require('./routes/provider'));
+app.use('/api/places', require('./routes/places'));
 app.use('/api/requests', require('./routes/requests'));
 app.use('/api/offers', require('./routes/offers'));
 

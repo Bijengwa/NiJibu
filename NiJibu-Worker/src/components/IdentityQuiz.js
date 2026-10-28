@@ -10,7 +10,7 @@ import Button from './Button';
 import Field from './Field';
 import Select from './Select';
 
-// The NIDA questions, one at a time. It does NOT say if an answer was right.
+// The NIDA questions, one at a time. After each answer it says right or wrong and how many questions are left.
 // The fundi passes with NEED correct answers in a row, and can try at most MAX questions.
 //   nidaNumber: digits    onPass(): all good    onExit(): after a failure
 export default function IdentityQuiz({ nidaNumber, onPass, onExit }) {
@@ -20,6 +20,30 @@ export default function IdentityQuiz({ nidaNumber, onPass, onExit }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState(''); // translation key
   const [busy, setBusy] = useState(false);
+  const [fb, setFb] = useState(null); // after an answer: { correct, next } until the fundi taps Continue
+
+  if (fb) {
+    const { correct, next } = fb;
+    const left = MAX - next.asked;
+    const color = correct ? colors.success : colors.error;
+    const last = next.result === 'pass' ? 'quizPassed' : next.result === 'fail' ? 'quizCannotPass' : null;
+    return (
+      <View style={styles.fb}>
+        <View style={[styles.fbBadge, { borderColor: color, backgroundColor: colors.surface }]}>
+          <Text style={{ color, fontSize: 34, fontWeight: '800' }}>{correct ? '✓' : '✗'}</Text>
+        </View>
+        <Text style={[styles.fbTitle, { color }]}>{t(correct ? 'quizRight' : 'quizWrong')}</Text>
+        <Text style={[styles.fbLine, { color: colors.text }]}>
+          {t('quizLeft')}: {left}
+        </Text>
+        <Text style={[styles.fbLine, { color: colors.textMuted }]}>
+          {t('quizStreak').replace('{a}', next.streak).replace('{n}', NEED)}
+        </Text>
+        {last ? <Text style={[styles.fbLine, { color: next.result === 'pass' ? colors.success : colors.error, fontWeight: '700' }]}>{t(last)}</Text> : null}
+        <Button title={t(next.result === 'pass' ? 'continue' : next.result === 'fail' ? 'quizExit' : 'quizNext')} onPress={proceed} style={{ marginTop: 24, alignSelf: 'stretch' }} />
+      </View>
+    );
+  }
 
   if (state.result === 'fail') {
     return (
@@ -41,15 +65,21 @@ export default function IdentityQuiz({ nidaNumber, onPass, onExit }) {
     setBusy(true);
     try {
       const { correct } = await checkAnswer({ nidaNumber, questionId: q.id, answer: toAnswer(q, value) });
-      const next = advance(state, correct);
-      setValue('');
+      setFb({ correct, next: advance(state, correct) });
       setBusy(false);
-      setState(next);
-      if (next.result === 'pass') onPass();
     } catch (e) {
       setError(e.code || 'UNKNOWN');
       setBusy(false);
     }
+  };
+
+  // Continue after the right/wrong message
+  const proceed = () => {
+    const { next } = fb;
+    setFb(null);
+    setValue('');
+    setState(next);
+    if (next.result === 'pass') onPass();
   };
 
   const change = (v) => {
@@ -94,4 +124,8 @@ const styles = StyleSheet.create({
   fail: { alignItems: 'center', marginTop: 28 },
   failTitle: { fontSize: 20, fontWeight: '800', textAlign: 'center' },
   body: { fontSize: 15, textAlign: 'center', marginTop: 10 },
+  fb: { alignItems: 'center', marginTop: 28 },
+  fbBadge: { width: 84, height: 84, borderRadius: 42, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  fbTitle: { fontSize: 24, fontWeight: '800', marginTop: 14 },
+  fbLine: { fontSize: 16, marginTop: 8, textAlign: 'center' },
 });

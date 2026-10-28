@@ -8,15 +8,26 @@ async function providerView(userId) {
   const base = { full_name: user?.name || null, email: user?.email || null };
   if (!p) {
     return { status: 'incomplete', rejection_reason: null, ...base, nida_name: null, services: [], region: null, district: null,
-      ward: null, lat: null, lng: null, experience: null, availability: null, nida_submitted: false, payout_set: false, is_online: false };
+      ward: null, service_details: [], other_jobs: [], lat: null, lng: null, experience: null, availability: null, nida_submitted: false, payout_set: false, is_online: false };
   }
-  const services = await db('provider_services as ps').join('services as s', 's.id', 'ps.service_id').where('ps.provider_id', p.id).pluck('s.slug');
+  const details = await db('provider_services as ps')
+    .join('services as s', 's.id', 'ps.service_id')
+    .where('ps.provider_id', p.id)
+    .select('s.slug as key', 'ps.experience', 'ps.availability');
+  const services = details.map((d) => d.key);
+  const other_jobs = await db('service_suggestions')
+    .where({ provider_id: p.id })
+    .whereIn('status', ['pending', 'rejected'])
+    .orderBy('id')
+    .select('name', 'experience', 'availability', 'status');
   return {
     status: p.nida_submitted ? p.verification_status : 'incomplete',
     rejection_reason: p.rejection_reason,
     ...base,
     nida_name: p.nida_name,
     services,
+    service_details: details,
+    other_jobs,
     region: p.region,
     district: p.district,
     ward: p.ward,

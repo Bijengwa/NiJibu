@@ -9,7 +9,7 @@ const db = require('../src/db');
 const app = require('../src/app');
 const { signToken } = require('../src/lib/token');
 
-const PHONES = ['255799900101', '255799900102', '255799900103'];
+const PHONES = ['255799900101', '255799900102', '255799900103', '255799900104', '255799900198'];
 const NIDA = '19950312123451234512'; // born 12/03/1995
 const NIDA2 = '19900101123451234599';
 let server, base;
@@ -140,4 +140,50 @@ test('details, same NIDA twice, payout, NIDA photos, admin verify', async () => 
   } finally {
     await db('users').where({ phone: '255799900199' }).del();
   }
+});
+
+test('each job has its own experience and availability; a typed job waits for the admin', async () => {
+  const user = await makeUser(PHONES[3], 'Neema Paul');
+  const admin = await makeUser(PHONES[4], 'Admin Two', 'admin');
+  const at = { lat: -6.6, lng: 39.2 };
+
+  // nothing chosen at all
+  assert.equal((await api(user, 'PUT', '/api/provider', { services: [], ...at })).status, 400);
+  // a job without experience
+  assert.equal((await api(user, 'PUT', '/api/provider', { services: [{ key: 'dobi', availability: 'always' }], ...at })).status, 400);
+
+  const saved = await api(user, 'PUT', '/api/provider', {
+    services: [
+      { key: 'dobi', experience: '1-3', availability: 'weekdays' },
+      { key: 'fundi-bomba', experience: '10+', availability: 'weekends' },
+    ],
+    other_jobs: [{ name: '  Fundi   Welding ', experience: '3-5', availability: 'always' }],
+    ...at,
+  });
+  assert.equal(saved.status, 200);
+  const view = saved.body.provider;
+  const by = Object.fromEntries(view.service_details.map((d) => [d.key, d]));
+  assert.equal(by.dobi.experience, '1-3');
+  assert.equal(by['fundi-bomba'].availability, 'weekends');
+  assert.deepEqual(view.other_jobs.map((o) => [o.name, o.status]), [['Fundi Welding', 'pending']]);
+
+  // admin sees it, puts it in the list once, and the fundi is linked with the values they gave
+  const list = await api(admin, 'GET', '/api/admin/suggestions');
+  const group = list.body.items.find((g) => g.name === 'Fundi Welding');
+  assert.ok(group && group.count >= 1);
+  assert.equal((await api(user, 'GET', '/api/admin/suggestions')).status, 403);
+  const ok = await api(admin, 'POST', `/api/admin/suggestions/${group.providers[0].suggestion_id}/approve`, { name_sw: 'Fundi welding', name_en: 'Welder' });
+  assert.equal(ok.status, 200);
+  try {
+    const after = (await api(user, 'GET', '/api/provider')).body.provider;
+    const welder = after.service_details.find((d) => d.key === 'welder');
+    assert.equal(welder.experience, '3-5');
+    assert.equal(welder.availability, 'always');
+    assert.equal(after.other_jobs.length, 0);
+  } finally {
+    await db('services').where({ slug: 'welder' }).del();
+  }
+
+  // admin can see the requests with who was offered them
+  assert.equal((await api(admin, 'GET', '/api/admin/requests')).status, 200);
 });

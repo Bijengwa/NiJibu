@@ -9,7 +9,7 @@ import { useSettings } from '../context/SettingsContext';
 import { useServices } from '../context/ServicesContext';
 
 // Profile of the verified fundi, payout and log out
-export default function AccountScreen({ onPayout }) {
+export default function AccountScreen({ onPayout, onEditDetails }) {
   const { colors, t } = useSettings();
   const { user, logout } = useAuth();
   const { provider } = useProvider();
@@ -20,6 +20,7 @@ export default function AccountScreen({ onPayout }) {
   const services = allServices
     .filter((s) => provider.services?.includes(s.key))
     .map((s) => `${s.emoji} ${s.label}`)
+    .concat((provider.other_jobs || []).filter((o) => o.status === 'pending').map((o) => `✍️ ${o.name}`))
     .join('   ');
 
   const confirmLogout = () =>
@@ -68,6 +69,7 @@ export default function AccountScreen({ onPayout }) {
       </View>
 
       <View style={[styles.card, { backgroundColor: colors.surface, marginTop: 16 }]}>
+        <Row icon={(c) => <UserIcon size={22} color={c} />} label={t('editDetails')} chevron onPress={onEditDetails} />
         <Row
           icon={(c) => <SettingsIcon size={22} color={c} />}
           label={t('payoutDetails')}
