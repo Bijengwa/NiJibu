@@ -8,7 +8,7 @@ let Notifications = null;
 function load() {
   if (Notifications) return Notifications;
   // Expo Go: do not even load it (no native part, only errors)
-  if (Constants.executionEnvironment === 'storeClient') return null;
+  if (Constants.executionEnvironment === 'storeClient' || Constants.appOwnership === 'expo') return null;
   try {
     Notifications = require('expo-notifications');
     Notifications.setNotificationHandler({
