@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as jobsApi from '../api/jobs';
 import { getCoords, watchCoords } from '../location/geo';
-import { registerPush } from '../push';
 import { connectSocket } from '../realtime';
 import { useAuth } from './AuthContext';
 import { useProvider } from './ProviderContext';
@@ -101,11 +100,6 @@ export function JobsProvider({ children }) {
   useEffect(() => {
     if (onlineRef.current || activeRef.current) startWatch(tripMode ? 'trip' : 'idle').catch(() => {});
   }, [tripMode, startWatch, online, active?.id]);
-
-  // Phone alerts for new requests, also when the app is closed
-  useEffect(() => {
-    if (token) registerPush(token);
-  }, [token]);
 
   // ---- socket ----
   useEffect(() => {

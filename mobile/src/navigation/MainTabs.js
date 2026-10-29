@@ -5,8 +5,6 @@ import { RequestProvider } from '../context/RequestContext';
 import { ServicesProvider } from '../context/ServicesContext';
 import { useSettings } from '../context/SettingsContext';
 import useNotifications from '../hooks/useNotifications';
-import { registerPush } from '../push';
-import { useAuth } from '../context/AuthContext';
 import AccountScreen from '../screens/AccountScreen';
 import ActivityScreen from '../screens/ActivityScreen';
 import ChangePasswordScreen from '../screens/ChangePasswordScreen';
@@ -39,10 +37,6 @@ export default function MainTabs() {
 function Tabs() {
   const { colors } = useSettings();
   const notifications = useNotifications();
-  const { token } = useAuth();
-  useEffect(() => {
-    if (token) registerPush(token);
-  }, [token]);
   const [tab, setTab] = useState('home');
   const [stack, setStack] = useState([]); // inner screens opened from Account
 
