@@ -13,8 +13,8 @@ import AuthScreen from './src/screens/AuthScreen';
 import DetailsScreen from './src/screens/DetailsScreen';
 import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
 import TermsGateScreen from './src/screens/TermsGateScreen';
-import NidaScreen from './src/screens/NidaScreen';
 import PayoutScreen from './src/screens/PayoutScreen';
+import RegistrationFeeScreen from './src/screens/RegistrationFeeScreen';
 import StatusScreen from './src/screens/StatusScreen';
 import VerifyScreen from './src/screens/VerifyScreen';
 import WorkerSignupScreen from './src/screens/WorkerSignupScreen';
@@ -29,14 +29,14 @@ function Loading() {
   );
 }
 
-// After login the fundi goes through: details -> NIDA -> payout (optional) -> status.
-// When verified, the fundi sees the requests (tabs).
+// Sign-up: details -> phone code (OTP) -> registration fee (1,000 TSh). Then the fundi goes through:
+// details (jobs) -> payout (optional) -> requests (tabs).
 // The step is chosen from what the server already has, so closing the app never loses progress.
 function ProviderFlow() {
   const { colors, t } = useSettings();
   const { logout } = useAuth();
   const { provider, loading, loadError, refresh } = useProvider();
-  const [override, setOverride] = useState(null); // 'details' | 'nida' | 'payout' | null
+  const [override, setOverride] = useState(null); // 'details' | 'payout' | null
   const [tab, setTab] = useState('requests'); // tab of the verified fundi, kept while a screen opens on top
 
   // Android back button: runs the back action of the screen that is open (set below on each render)
@@ -63,35 +63,18 @@ function ProviderFlow() {
     );
   }
 
-  const view =
-    override ??
-    (!provider.full_name || (provider.nida_submitted && !provider.services?.length && !provider.other_jobs?.length)
-      ? 'details'
-      : !provider.nida_submitted
-        ? 'nida'
-        : provider.status === 'verified'
-          ? 'home'
-          : 'status');
-
-  // A fundi who already has jobs can go back from the details (edit mode)
   const hasJobs = !!(provider.services?.length || provider.other_jobs?.length);
 
+  // The fee comes first: nothing else opens until it is paid
+  if (!provider.fee_paid) return <RegistrationFeeScreen />;
+
+  const view = override ?? (!provider.full_name || !hasJobs ? 'details' : provider.status === 'verified' ? 'home' : 'status');
+
   if (view === 'details') {
-    const back = provider.nida_submitted && hasJobs ? () => setOverride(null) : null;
+    // A fundi who already has jobs can go back from the details (edit mode)
+    const back = hasJobs ? () => setOverride(null) : null;
     backRef.current = back;
     return <DetailsScreen onBack={back} onDone={() => setOverride(back || provider.payout_set ? null : 'payout')} />;
-  }
-
-  if (view === 'nida') {
-    // Can go back to the details only before the NIDA was sent
-    const back = provider.full_name && !provider.nida_submitted ? () => setOverride('details') : () => setOverride(null);
-    backRef.current = back;
-    return (
-      <NidaScreen
-        onBack={back}
-        onDone={(p) => setOverride(p.payout_set ? null : 'payout')}
-      />
-    );
   }
 
   // A verified fundi keeps the online switch and the requests while moving between Account and Payout
@@ -106,7 +89,7 @@ function ProviderFlow() {
     return provider.status === 'verified' ? <JobsProvider>{body}</JobsProvider> : body;
   }
 
-  return <StatusScreen onRetry={() => setOverride('nida')} onPayout={() => setOverride('payout')} onEditDetails={() => setOverride('details')} />;
+  return <StatusScreen onPayout={() => setOverride('payout')} onEditDetails={() => setOverride('details')} />;
 }
 
 function Root() {

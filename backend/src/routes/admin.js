@@ -1,11 +1,16 @@
 const router = require('express').Router();
-const path = require('path');
 const db = require('../db');
 const { notify } = require('../services/notify');
+const { SUPER, supportMay } = require('../lib/roles');
 
-// Mounted behind requireAuth + requireRole('admin') in app.js
+// Mounted behind requireAuth + requireRole(...STAFF) in app.js.
+// Superadmin may call everything. Customer care (support) may call only the list in lib/roles.js.
+router.use((req, res, next) => {
+  if (req.user.role === SUPER || supportMay(req.method, req.path)) return next();
+  res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+});
 
-// Providers waiting for a decision (until NIDA verification is connected)
+// Providers by status
 router.get('/providers', async (req, res, next) => {
   try {
     const status = ['pending', 'verified', 'rejected'].includes(req.query.status) ? req.query.status : 'pending';
@@ -13,7 +18,7 @@ router.get('/providers', async (req, res, next) => {
       .join('users as u', 'u.id', 'p.user_id')
       .where('p.verification_status', status)
       .orderBy('p.created_at')
-      .select('p.id', 'u.name', 'u.phone', 'p.verification_status', 'p.nida_submitted', 'p.nida_name', 'p.region', 'p.district', 'p.created_at');
+      .select('p.id', 'u.name', 'u.phone', 'p.verification_status', 'p.registered_at', 'p.region', 'p.district', 'p.created_at');
     res.json({ items });
   } catch (err) {
     next(err);
@@ -66,19 +71,6 @@ router.get('/search-gaps', async (req, res, next) => {
   }
 });
 
-// Private NIDA photos (admin only): kind = selfie | id
-router.get('/providers/:id/nida/:kind', async (req, res, next) => {
-  try {
-    const p = await db('provider_profiles').where({ id: Number(req.params.id) || 0 }).first('nida_selfie_path', 'nida_id_path');
-    const file = p && (req.params.kind === 'selfie' ? p.nida_selfie_path : req.params.kind === 'id' ? p.nida_id_path : null);
-    if (!file) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
-    res.set('Cache-Control', 'private, no-store');
-    res.sendFile(path.join(require('./providerProfile').NIDA_DIR, path.basename(file)));
-  } catch (err) {
-    next(err);
-  }
-});
-
 // Jobs (register, edit, worker suggestions, missing searches): adminJobs.js
 
 // Requests and payments (lists, one request in full, money totals): adminRequests.js
@@ -90,6 +82,16 @@ router.post('/payouts/:id/retry', async (req, res, next) => {
     const po = await db('payouts').where({ id: Number(req.params.id) }).first();
     if (!po) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
     const out = await require('../services/payments').sendPayout(po.payment_id);
+    res.json({ payout: out });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The admin paid the worker by hand (Selcom payouts are not connected yet): record it and send the "we paid you" SMS
+router.post('/payouts/:id/mark-sent', async (req, res, next) => {
+  try {
+    const out = await require('../services/payments').markPayoutSent(Number(req.params.id), req.body?.reference);
     res.json({ payout: out });
   } catch (err) {
     next(err);
@@ -121,34 +123,36 @@ router.post('/complaints/:id', async (req, res, next) => {
   }
 });
 
-// Registration fees workers paid before an identity check (what was paid, how many tries, how each try ended)
-router.get('/verification-fees', async (req, res, next) => {
+// Registration fees workers paid (what was paid and whether it went through)
+router.get('/registration-fees', async (req, res, next) => {
   try {
     const status = ['paid', 'pending', 'failed'].includes(req.query.status) ? req.query.status : null;
-    const q = db('verification_fees as f').leftJoin('users as u', 'u.phone', 'f.phone')
+    const q = db('registration_fees as f').leftJoin('users as u', 'u.phone', 'f.phone')
       .orderBy('f.id', 'desc').limit(200)
-      .select('f.id', 'f.phone', 'f.pay_phone', 'f.amount', 'f.status', 'f.network', 'f.reference', 'f.failure', 'f.outcome', 'f.hits', 'f.created_at', 'f.paid_at', 'u.name');
+      .select('f.id', 'f.phone', 'f.pay_phone', 'f.amount', 'f.status', 'f.network', 'f.reference', 'f.failure', 'f.created_at', 'f.paid_at', 'u.name');
     if (status) q.where('f.status', status);
-    const [items, totals, byPhone] = await Promise.all([
+    const [items, totals] = await Promise.all([
       q,
-      db('verification_fees').select(
+      db('registration_fees').select(
         db.raw("count(*) filter (where status = 'paid')::int as paid"),
         db.raw("coalesce(sum(amount) filter (where status = 'paid'), 0)::int as collected"),
         db.raw("count(*) filter (where status = 'pending')::int as pending"),
-        db.raw("count(*) filter (where status = 'failed')::int as failed"),
-        db.raw("count(*) filter (where status = 'paid' and outcome = 'passed')::int as passed"),
-        db.raw("count(*) filter (where status = 'paid' and outcome = 'failed')::int as failed_checks")
+        db.raw("count(*) filter (where status = 'failed')::int as failed")
       ).first(),
-      db('verification_fees').where({ status: 'paid' }).groupBy('phone').select('phone', db.raw('count(*)::int as tries')),
     ]);
-    const tries = new Map(byPhone.map((r) => [r.phone, r.tries]));
-    res.json({ totals, items: items.map((i) => ({ ...i, tries_by_phone: tries.get(i.phone) || 0 })) });
+    res.json({ totals, items });
   } catch (err) {
     next(err);
   }
 });
 
-router.use(require('./adminJobs')); // jobs registry + dashboard summary
+// Outside services: what we use and what it costs (adminServices.js)
+router.use('/services', require('./adminServices'));
+
+router.use(require('./adminMoney')); // money in parts + price data
+router.use(require('./adminStaff')); // staff accounts (superadmin only through the gate above)
+router.use(require('./adminSeries')); // numbers over time for the charts
+router.use(require('./adminJobs')); // jobs registry + home summary
 router.use(require('./adminUsers')); // people: customers and service providers
 
 module.exports = router;

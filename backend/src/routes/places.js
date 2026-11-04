@@ -11,6 +11,7 @@ const router = require('express').Router();
 const { requireAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { validLat, validLng } = require('../lib/geo');
+const usage = require('../lib/usage');
 
 const googleKey = () => process.env.GOOGLE_MAPS_SERVER_KEY;
 const useGoogle = () => process.env.PLACES_PROVIDER === 'google' && !!googleKey();
@@ -25,10 +26,29 @@ router.use(rateLimit({ windowMs: 60 * 1000, max: 40, key: (req) => `places:${req
 
 async function osm(path, params) {
   const url = `${BASE}${path}?${new URLSearchParams(params)}`;
+  const op = path === '/reverse' ? 'places_reverse' : 'places_search';
   const hit = cache.get(url);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
-  const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en,sw' }, signal: AbortSignal.timeout(8000) });
-  if (!r.ok) throw Object.assign(new Error('Places unavailable'), { status: 502, code: 'PLACES_UNAVAILABLE', expose: true });
+  if (hit && Date.now() - hit.at < CACHE_MS) {
+    usage.record({ service: 'osm', operation: op, cached: true });
+    return hit.data;
+  }
+  const t0 = Date.now();
+  const unavailable = () => Object.assign(new Error('Places unavailable'), { status: 503, code: 'PLACES_UNAVAILABLE', expose: true });
+  let r;
+  try {
+    r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en,sw' }, signal: AbortSignal.timeout(Number(process.env.PLACES_TIMEOUT_MS ?? 6000)) });
+  } catch (e) {
+    console.warn('[places] provider did not answer:', e.name); // one short line, not a stack dump
+    usage.record({ service: 'osm', operation: op, ok: false, ms: Date.now() - t0 });
+    if (hit) return hit.data; // an old answer is better than an error
+    throw unavailable();
+  }
+  if (!r.ok) {
+    usage.record({ service: 'osm', operation: op, ok: false, ms: Date.now() - t0 });
+    if (hit) return hit.data;
+    throw unavailable();
+  }
+  usage.record({ service: 'osm', operation: op, ms: Date.now() - t0 });
   const data = await r.json();
   if (cache.size > 500) cache.clear();
   cache.set(url, { at: Date.now(), data });
@@ -45,14 +65,27 @@ const short = (p) => {
 const view = (p) => ({ label: short(p), full: p.display_name, lat: Number(p.lat), lng: Number(p.lon) });
 
 // ---- Google ----
-async function google(url, init, cacheKey) {
+// op = the name used on the admin Services page (so every Google call is counted and priced)
+async function google(url, init, cacheKey, op) {
   const hit = cache.get(cacheKey);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
-  const r = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
+  if (hit && Date.now() - hit.at < CACHE_MS) {
+    usage.record({ service: 'google_maps', operation: op, cached: true });
+    return hit.data;
+  }
+  const t0 = Date.now();
+  let r;
+  try {
+    r = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
+  } catch (e) {
+    usage.record({ service: 'google_maps', operation: op, ok: false, ms: Date.now() - t0 });
+    throw e;
+  }
   const data = await r.json().catch(() => null);
   if (!r.ok || !data || data.error || (data.status && !['OK', 'ZERO_RESULTS'].includes(data.status))) {
+    usage.record({ service: 'google_maps', operation: op, ok: false, ms: Date.now() - t0 });
     throw new Error(data?.error?.message || data?.error_message || data?.status || `HTTP ${r.status}`);
   }
+  usage.record({ service: 'google_maps', operation: op, ms: Date.now() - t0 });
   if (cache.size > 500) cache.clear();
   cache.set(cacheKey, { at: Date.now(), data });
   return data;
@@ -64,7 +97,8 @@ async function googleSearch(q, lat, lng) {
   const data = await google(
     'https://places.googleapis.com/v1/places:searchText',
     { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': googleKey(), 'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location' }, body: JSON.stringify(body) },
-    `g:search:${q}:${lat?.toFixed?.(2)}:${lng?.toFixed?.(2)}`
+    `g:search:${q}:${lat?.toFixed?.(2)}:${lng?.toFixed?.(2)}`,
+    'places_text_search'
   );
   return (data.places || []).map((p) => {
     const name = p.displayName?.text || '';
@@ -76,7 +110,7 @@ async function googleSearch(q, lat, lng) {
 
 async function googleReverse(lat, lng) {
   const params = new URLSearchParams({ latlng: `${lat.toFixed(5)},${lng.toFixed(5)}`, language: 'en', key: googleKey() });
-  const data = await google(`https://maps.googleapis.com/maps/api/geocode/json?${params}`, {}, `g:rev:${lat.toFixed(4)}:${lng.toFixed(4)}`);
+  const data = await google(`https://maps.googleapis.com/maps/api/geocode/json?${params}`, {}, `g:rev:${lat.toFixed(4)}:${lng.toFixed(4)}`, 'geocode_reverse');
   const g = data.results?.[0];
   if (!g) return null;
   const part = (type) => g.address_components?.find((c) => c.types.includes(type))?.long_name;

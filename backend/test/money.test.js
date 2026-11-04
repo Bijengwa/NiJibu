@@ -42,7 +42,7 @@ test.after(async () => {
 });
 
 test('request -> price saved -> failed pay then good pay -> everything points back to the request', async () => {
-  const admin = await makeUser('Boss', `${PREFIX}00001`, 'admin');
+  const admin = await makeUser('Boss', `${PREFIX}00001`, 'superadmin');
   const customer = await makeUser('Asha Customer', `${PREFIX}00002`);
   const worker = await makeUser('Juma Fundi', `${PREFIX}00003`);
   const other = await makeUser('Neema Customer', `${PREFIX}00004`);
@@ -59,7 +59,7 @@ test('request -> price saved -> failed pay then good pay -> everything points ba
 
   assert.equal((await api(worker, 'POST', `/api/requests/${r.id}/start`, { price: 25000 })).status, 200);
   const priced = await db('requests').where({ id: r.id }).first();
-  assert.deepEqual([priced.agreed_price, priced.fee_percent, priced.fee_due, priced.payout_due], [25000, 10, 2500, 22500], 'what should be paid is saved on the request');
+  assert.deepEqual([priced.agreed_price, priced.fee_percent, priced.fee_due, priced.payout_due], [25000, 13, 3250, 21750], 'what should be paid is saved on the request');
   assert.equal((await api(worker, 'POST', `/api/requests/${r.id}/complete`)).status, 200);
   const view = (await api(customer, 'GET', `/api/requests/${r.id}`)).body.request;
   assert.equal(view.code, r.code);
@@ -88,7 +88,7 @@ test('request -> price saved -> failed pay then good pay -> everything points ba
   const mine = (await api(customer, 'GET', '/api/requests')).body.items.find((i) => i.id === r.id);
   assert.deepEqual([mine.code, mine.outcome], [r.code, 'successful']);
   const jobs = (await api(worker, 'GET', '/api/provider/jobs')).body.items.find((i) => i.id === r.id);
-  assert.deepEqual([jobs.code, jobs.outcome, jobs.payout_due], [r.code, 'successful', 22500]);
+  assert.deepEqual([jobs.code, jobs.outcome, jobs.payout_due], [r.code, 'successful', 21750]);
 
   // admin: only admins
   assert.equal((await api(customer, 'GET', '/api/admin/requests')).status, 403);
@@ -98,7 +98,7 @@ test('request -> price saved -> failed pay then good pay -> everything points ba
   const row = list.items.find((i) => i.id === r.id);
   assert.equal(row.customer_name, 'Asha Customer');
   assert.equal(row.provider_name, 'Juma Fundi');
-  assert.deepEqual([row.outcome, row.agreed_price, row.fee_due, row.payout_due, row.payment_status, row.payment_attempts], ['successful', 25000, 2500, 22500, 'paid', 2]);
+  assert.deepEqual([row.outcome, row.agreed_price, row.fee_due, row.payout_due, row.payment_status, row.payment_attempts], ['successful', 25000, 3250, 21750, 'paid', 2]);
   const failedList = (await api(admin, 'GET', `/api/admin/requests?q=${PREFIX}&outcome=failed`)).body.items;
   assert.deepEqual(failedList.map((i) => i.reason).sort(), ['Customer cancelled: Changed my mind', 'No provider was found']);
   assert.equal((await api(admin, 'GET', `/api/admin/requests?q=${r.code}`)).body.total, 1, 'search by code');
@@ -118,7 +118,7 @@ test('request -> price saved -> failed pay then good pay -> everything points ba
 });
 
 test('a finished job that is not paid shows as money still to collect', async () => {
-  const admin = await makeUser('Boss2', `${PREFIX}00011`, 'admin');
+  const admin = await makeUser('Boss2', `${PREFIX}00011`, 'superadmin');
   const customer = await makeUser('Unpaid Customer', `${PREFIX}00012`);
   const worker = await makeUser('Unpaid Fundi', `${PREFIX}00013`);
   const service = await db('services').where({ slug: 'dobi' }).first('id');
@@ -126,10 +126,10 @@ test('a finished job that is not paid shows as money still to collect', async ()
   const before = (await api(admin, 'GET', '/api/admin/payments')).body.expected;
   await db('requests').insert({
     customer_id: customer.id, service_id: service.id, provider_id: p.id, status: 'completed', lat: -6.67, lng: 39.22,
-    agreed_price: 10000, fee_percent: 10, fee_due: 1000, payout_due: 9000, completed_at: db.fn.now(),
+    agreed_price: 15000, fee_percent: 13, fee_due: 1950, payout_due: 13050, completed_at: db.fn.now(),
   });
   const after = (await api(admin, 'GET', '/api/admin/payments')).body.expected;
-  assert.deepEqual([after.jobs - before.jobs, after.gross - before.gross, after.commission - before.commission, after.for_fundis - before.for_fundis], [1, 10000, 1000, 9000]);
+  assert.deepEqual([after.jobs - before.jobs, after.gross - before.gross, after.commission - before.commission, after.for_fundis - before.for_fundis], [1, 15000, 1950, 13050]);
   const list = (await api(admin, 'GET', `/api/admin/requests?q=${PREFIX}00012&outcome=awaiting_payment`)).body;
   assert.equal(list.total, 1);
 });

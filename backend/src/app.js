@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const db = require('./db');
 const { requireAuth, requireRole } = require('./middleware/auth');
+const { SUPER, STAFF } = require('./lib/roles');
 
 const app = express();
 
@@ -37,13 +38,15 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads'), { index: 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/me', require('./routes/me'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.use('/api/users', requireAuth, requireRole('admin'), require('./routes/users'));
-app.use('/api/admin', requireAuth, requireRole('admin'), require('./routes/admin'));
+app.use('/api/users', requireAuth, requireRole(SUPER), require('./routes/users'));
+// Staff only. Which staff role may call what is decided inside routes/admin.js
+app.use('/api/admin', requireAuth, requireRole(...STAFF), require('./routes/admin'));
 app.use('/api/services', require('./routes/services'));
-app.use('/api/provider/identity', require('./routes/identity'));
+app.use('/api/provider/registration', require('./routes/registration'));
 app.use('/api/provider', require('./routes/providerProfile'));
 app.use('/api/provider', require('./routes/provider'));
 app.use('/api/places', require('./routes/places'));
+app.use('/api/usage', require('./routes/usage'));
 app.use('/api/requests', require('./routes/requests'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/offers', require('./routes/offers'));

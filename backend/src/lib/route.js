@@ -3,6 +3,7 @@
 //   - OSRM public servers know the car profile only, so a motorbike uses the same road with its own speed factor.
 //   - If the server is slow or down we fall back to a straight-line estimate, so the app always has a time to show.
 const { distanceKm } = require('./geo');
+const usage = require('./usage');
 
 const OSRM_URL = process.env.OSRM_URL || 'https://router.project-osrm.org';
 const TIMEOUT_MS = Number(process.env.OSRM_TIMEOUT_MS ?? 3500);
@@ -38,7 +39,15 @@ function thin(points, max = 120) {
 
 async function fromOsrm(from, to) {
   const url = `${OSRM_URL}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&alternatives=false&steps=false`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { 'User-Agent': 'NiJibu/1.0' } });
+  const t0 = Date.now();
+  let res;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { 'User-Agent': 'NiJibu/1.0' } });
+  } catch (e) {
+    usage.record({ service: 'osrm', operation: 'route', ok: false, ms: Date.now() - t0 });
+    throw e;
+  }
+  usage.record({ service: 'osrm', operation: 'route', ok: res.ok, ms: Date.now() - t0 });
   if (!res.ok) throw new Error(`OSRM ${res.status}`);
   const json = await res.json();
   const r = json?.routes?.[0];

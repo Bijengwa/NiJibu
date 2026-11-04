@@ -11,6 +11,9 @@
 //  - messages about a job are best effort: they never throw and never block the request
 const db = require('../db');
 const { HttpError } = require('../lib/httpError');
+const usage = require('../lib/usage');
+
+const tzs = (v) => Number(v || 0).toLocaleString('en-US');
 
 const mode = () => process.env.MESSAGING_MODE || (process.env.NODE_ENV === 'test' ? 'off' : process.env.NODE_ENV === 'production' ? 'live' : 'console');
 
@@ -47,10 +50,11 @@ const TEMPLATES = {
     sw: (p) => `NiJibu: Kazi yako "${p.old_sw}" sasa inaitwa "${p.new_sw}". Hakuna unachohitaji kufanya.`,
     en: (p) => `NiJibu: Your job "${p.old_en}" is now called "${p.new_en}". You do not need to do anything.`,
   },
+  // The worker was paid. `code` = the job code (NJ-000012), so he knows which job the money is for.
   payment_received: {
-    wa: 'nijibu_payment_received', vars: ['amount'],
-    sw: (p) => `NiJibu: Umetumiwa TZS ${p.amount} kwenye namba yako ya malipo.`,
-    en: (p) => `NiJibu: TZS ${p.amount} was sent to your payout number.`,
+    wa: 'nijibu_payment_received', vars: ['amount', 'code'],
+    sw: (p) => `NiJibu: Tumekulipa TZS ${tzs(p.amount)}${p.code ? ` kwa kazi ${p.code}` : ''}. Angalia namba yako ya malipo.`,
+    en: (p) => `NiJibu: We paid you TZS ${tzs(p.amount)}${p.code ? ` for job ${p.code}` : ''}. Check your payout number.`,
   },
 };
 // In-app notification type -> message template (only the events worth a paid SMS)
@@ -66,24 +70,42 @@ const FOR_NOTIFICATION = {
 const log = (row) => db('message_log').insert(row).catch((e) => console.warn('[messaging] log failed:', e.message));
 const fail = (code, message) => Object.assign(new Error(message || code), { code });
 
+// Messages that are always sent, even if the person turned notifications off (security and money)
+const ALWAYS = new Set(['payment_received']);
+
 // ---- Africa's Talking SMS ----
-async function sendSms(phone, text) {
+// Africa's Talking answers with the real cost of the SMS ("TZS 25.0000"): it goes to the usage table
+async function sendSms(phone, text, tag = null) {
   const username = process.env.AT_USERNAME;
   const apiKey = process.env.AT_API_KEY;
   if (!username || !apiKey) throw fail('SMS_NOT_CONFIGURED', 'AT_USERNAME / AT_API_KEY missing');
   const base = process.env.AT_BASE_URL || (username === 'sandbox' ? 'https://api.sandbox.africastalking.com' : 'https://api.africastalking.com');
   const body = new URLSearchParams({ username, to: `+${phone}`, message: text });
   if (process.env.AT_SENDER_ID) body.set('from', process.env.AT_SENDER_ID);
-  const res = await fetch(`${base}/version1/messaging`, {
-    method: 'POST',
-    headers: { apiKey, Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    signal: AbortSignal.timeout(10000),
-  });
+  const t0 = Date.now();
+  const parts = usage.smsParts(text);
+  let res;
+  try {
+    res = await fetch(`${base}/version1/messaging`, {
+      method: 'POST',
+      headers: { apiKey, Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (e) {
+    usage.record({ service: 'africastalking', operation: 'sms', ok: false, ms: Date.now() - t0, tag });
+    throw e;
+  }
   const json = await res.json().catch(() => null);
   const r = json?.SMSMessageData?.Recipients?.[0];
   // 100 Processed, 101 Sent, 102 Queued
-  if (!res.ok || !r || ![100, 101, 102].includes(r.statusCode)) throw fail('SMS_FAILED', r?.status || json?.SMSMessageData?.Message || `HTTP ${res.status}`);
+  const ok = res.ok && r && [100, 101, 102].includes(r.statusCode);
+  const cost = /^([A-Z]{3})\s+([\d.]+)$/.exec(String(r?.cost || '').trim());
+  usage.record({
+    service: 'africastalking', operation: 'sms', ok: Boolean(ok), units: parts, ms: Date.now() - t0, tag,
+    reported_cost: ok && cost ? Number(cost[2]) : null, reported_currency: ok && cost ? cost[1] : null,
+  });
+  if (!ok) throw fail('SMS_FAILED', r?.status || json?.SMSMessageData?.Message || `HTTP ${res.status}`);
   return r.messageId || null;
 }
 
@@ -92,19 +114,27 @@ async function sendWhatsApp(phone, tpl, lang, params) {
   const token = process.env.WA_ACCESS_TOKEN;
   const phoneId = process.env.WA_PHONE_NUMBER_ID;
   if (!token || !phoneId) throw fail('WHATSAPP_NOT_CONFIGURED', 'WA_ACCESS_TOKEN / WA_PHONE_NUMBER_ID missing');
-  const values = tpl.vars.map((k) => String(params[k] ?? ''));
+  const values = tpl.vars.map((k) => String(params[k] ?? '-')); // WhatsApp refuses an empty value
   const components = [];
   if (values.length) components.push({ type: 'body', parameters: values.map((text) => ({ type: 'text', text })) });
   // Authentication templates also need the code in the "copy code" button
   if (tpl.auth) components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: values[0] }] });
-  const res = await fetch(`https://graph.facebook.com/${process.env.WA_API_VERSION || 'v21.0'}/${phoneId}/messages`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messaging_product: 'whatsapp', to: phone, type: 'template', template: { name: tpl.wa, language: { code: lang }, components } }),
-    signal: AbortSignal.timeout(10000),
-  });
+  const t0 = Date.now();
+  let res;
+  try {
+    res = await fetch(`https://graph.facebook.com/${process.env.WA_API_VERSION || 'v21.0'}/${phoneId}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', to: phone, type: 'template', template: { name: tpl.wa, language: { code: lang }, components } }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (e) {
+    usage.record({ service: 'whatsapp', operation: 'message', ok: false, ms: Date.now() - t0, tag: tpl.wa.replace(/^nijibu_/, '') });
+    throw e;
+  }
   const json = await res.json().catch(() => null);
   const id = json?.messages?.[0]?.id;
+  usage.record({ service: 'whatsapp', operation: 'message', ok: Boolean(res.ok && id), ms: Date.now() - t0, tag: tpl.wa.replace(/^nijibu_/, '') });
   if (!res.ok || !id) throw fail('WHATSAPP_FAILED', json?.error?.message || `HTTP ${res.status}`);
   return id;
 }
@@ -125,7 +155,7 @@ async function deliver({ userId = null, phone, lang = 'sw', template, params = {
       if (m === 'console') {
         console.log(`\n[${channel.toUpperCase()}] +${phone}  ${template === 'otp' ? text : `${template}: ${text}`}\n`);
       } else {
-        ref = channel === 'sms' ? await sendSms(phone, text) : await sendWhatsApp(phone, tpl, l, params);
+        ref = channel === 'sms' ? await sendSms(phone, text, template) : await sendWhatsApp(phone, tpl, l, params);
       }
       await log({ user_id: userId, phone, channel, template, status: 'sent', provider_ref: ref });
       return true;
@@ -156,7 +186,7 @@ async function sendForNotification(userId, type, params = {}) {
     const template = FOR_NOTIFICATION[type];
     if (!template || mode() === 'off') return;
     const u = await db('users').where({ id: userId }).first('phone', 'language', 'whatsapp_opt_in', 'notifications_enabled');
-    if (!u?.phone || u.notifications_enabled === false) return;
+    if (!u?.phone || (u.notifications_enabled === false && !ALWAYS.has(template))) return;
     await deliver({ userId, phone: u.phone, lang: u.language || 'sw', template, params, whatsapp: !!u.whatsapp_opt_in });
   } catch (e) {
     console.warn('[messaging] failed:', e.message);

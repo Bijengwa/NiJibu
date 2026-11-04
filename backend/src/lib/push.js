@@ -1,4 +1,5 @@
 const db = require('../db');
+const usage = require('./usage');
 
 // Push notification through Expo's free push service. Best effort: it never throws and never blocks a request.
 // The phone must have registered its token (PUT /api/me/push-token).
@@ -16,6 +17,7 @@ async function sendPush(userId, { title, body, data = {} }) {
       body: JSON.stringify({ to: user.push_token, title, body, data, sound: 'default', priority: 'high', channelId: 'default', ttl: 60 }),
     });
     const json = await res.json().catch(() => null);
+    usage.record({ service: 'expo_push', operation: 'push', ok: res.ok });
     const err = json?.data?.details?.error || json?.data?.status === 'error' ? json.data : null;
     // The phone no longer accepts pushes (app removed): forget the token
     if (err?.details?.error === 'DeviceNotRegistered') await db('users').where({ id: userId }).update({ push_token: null });

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from './api'
 import { Icon } from './icons'
 import { Badge, Modal, Notice, Tabs, Trend } from './ui'
+import { isSuper } from './session'
 import { ago, fmt, tzs, useLoad } from './utils'
 
 const DAYS = [7, 30, 90]
@@ -84,7 +85,7 @@ function Registered({ days, onNotice }) {
   return (
     <>
       <div className="pad filter">
-        <button className="small solid" onClick={() => setModal({ job: null })}>Register a job</button>
+        <button className="small solid ro-hide" onClick={() => setModal({ job: null })}>Register a job</button>
         <span className="muted">{fmt(data.items.length)} jobs</span>
       </div>
       <div className="table-wrap"><table className="rt">
@@ -458,11 +459,11 @@ export default function Jobs({ initialTab }) {
   const counts = useLoad('/api/admin/summary')
 
   return (
-    <div className="stack wide">
+    <div className={`stack wide${isSuper() ? '' : ' readonly'}`}>
       <p className="muted lead">
-        <Icon name="gaps" size={15} /> What customers ask for, what is registered, and what workers offer.
+        <Icon name="gaps" size={15} /> What customers ask for, what is registered, and what workers offer.{!isSuper() && ' You can look at this page. Only a superadmin changes jobs.'}
       </p>
-      <div className="bar">
+      <div className="bar sticky-bar">
         <Tabs
           value={tab}
           onChange={(t) => { setTab(t); note('') }}

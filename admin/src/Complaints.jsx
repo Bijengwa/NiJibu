@@ -95,7 +95,7 @@ export default function Complaints() {
   return (
     <div className="stack wide">
       <p className="muted lead"><Icon name="complaints" size={15} /> Problems reported by customers and workers. Each one belongs to a request.</p>
-      <div className="bar">
+      <div className="bar sticky-bar">
         <Tabs
           value={status}
           onChange={setStatus}

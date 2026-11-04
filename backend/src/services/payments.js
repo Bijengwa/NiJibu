@@ -1,5 +1,6 @@
 // Customer pays for a finished job. NiJibu keeps COMMISSION_PERCENT (default 13) and pays the rest to the fundi.
 const db = require('../db');
+const { SUPER } = require('../lib/roles');
 const { HttpError } = require('../lib/httpError');
 const { notify } = require('./notify');
 const dispatch = require('./dispatch');
@@ -7,7 +8,7 @@ const provider = require('./paymentProvider');
 
 const COMMISSION_PERCENT = Number(process.env.COMMISSION_PERCENT ?? 13);
 const NETWORKS = ['mpesa', 'mixx', 'airtel', 'halopesa'];
-const MIN_PRICE = Number(process.env.MIN_PRICE ?? 10000); // jobs under TZS 10,000 are not accepted
+const MIN_PRICE = Number(process.env.MIN_PRICE ?? 15000); // jobs under TZS 15,000 are not accepted
 const MAX_PRICE = 5000000;
 const PENDING_MS = 10 * 60 * 1000; // a payment the customer never approved on the phone is closed after 10 minutes
 
@@ -55,11 +56,36 @@ async function sendPayout(paymentId) {
   }
   if (result.ok) {
     await db('payouts').where({ id: row.id }).update({ status: 'sent', reference: result.reference, network, number, failure: null, sent_at: db.fn.now() });
-    await notify(p.user_id, 'payment_received', 'You were paid', `TZS ${row.amount} was sent to your ${network} number.`, { amount: row.amount });
+    provider.recordPayout(row.amount);
+    await tellPaid(p.user_id, payment, row.amount, network);
   } else {
     await db('payouts').where({ id: row.id }).update({ status: 'failed', failure: String(result.failure || 'ERROR').slice(0, 100) });
   }
   return db('payouts').where({ id: row.id }).first();
+}
+
+// "We paid you": an in-app notification, a push, and an SMS from Africa's Talking (always sent, see messaging.ALWAYS).
+// `code` is the job code (NJ-000012) so the worker knows which job the money is for.
+async function tellPaid(userId, payment, amount, network) {
+  const r = await db('requests').where({ id: payment.request_id }).first('code');
+  await notify(userId, 'payment_received', 'You were paid', `TZS ${amount} was sent to your ${network || 'mobile money'} number${r?.code ? ` for job ${r.code}` : ''}.`, { amount, code: r?.code || null });
+}
+
+// The admin paid the worker by hand (until Selcom payouts are connected): record it and send the same message.
+async function markPayoutSent(payoutId, reference) {
+  const po = await db('payouts').where({ id: payoutId }).first();
+  if (!po) throw new HttpError(404, 'NOT_FOUND', 'Payout not found');
+  if (po.status === 'sent') throw new HttpError(409, 'ALREADY_SENT', 'This payout is already marked as sent');
+  const payment = await db('payments').where({ id: po.payment_id }).first();
+  if (!payment || payment.status !== 'paid') throw new HttpError(409, 'BAD_STATE', 'The customer has not paid yet');
+  if (await require('./complaints').holdsPayout(payment.request_id)) throw new HttpError(409, 'ON_HOLD', 'A complaint is open for this job. Answer it first.');
+  const ref = typeof reference === 'string' ? reference.trim().slice(0, 80) : '';
+  if (ref.length < 3) throw new HttpError(400, 'VALIDATION', 'Write the mobile money transaction ID');
+  const p = await db('provider_profiles').where({ id: po.provider_id }).first('user_id', 'payout_network', 'payout_number');
+  const n = await db('payouts').where({ id: po.id }).whereNot('status', 'sent').update({ status: 'sent', reference: `MANUAL-${ref}`, network: po.network || p?.payout_network || null, number: po.number || p?.payout_number || null, failure: null, sent_at: db.fn.now() });
+  if (!n) throw new HttpError(409, 'ALREADY_SENT', 'This payout is already marked as sent'); // two admins at once: only one sends the message
+  await tellPaid(p.user_id, payment, po.amount, po.network || p?.payout_network);
+  return db('payouts').where({ id: po.id }).first();
 }
 
 // The customer pays the price the fundi entered
@@ -126,6 +152,7 @@ async function payRequest(user, requestId, { network, phone }) {
 
   await db('payments').where({ id: payment.id }).update({ status: 'paid', reference: result.reference, paid_at: db.fn.now(), failure: null });
   await attempt('success', { reference: result.reference });
+  provider.recordCollected(r.agreed_price);
   await notify(user.id, 'payment_done', 'Payment received', `Thank you. TZS ${r.agreed_price} was paid.`, { amount: r.agreed_price });
 
   await sendPayout(payment.id); // the fundi's share goes out right away (never throws)
@@ -142,6 +169,7 @@ async function settle(orderId, outcome) {
     const n = await db('payments').where({ id: payment.id, status: 'pending' }).update({ status: 'paid', paid_at: db.fn.now(), failure: null });
     if (!n) return null;
     await db('payment_attempts').where({ payment_id: payment.id, reference: orderId, status: 'pending' }).update({ status: 'success' });
+    provider.recordCollected(payment.amount);
     await notify(payment.customer_id, 'payment_done', 'Payment received', `Thank you. TZS ${payment.amount} was paid.`, { amount: payment.amount });
     await sendPayout(payment.id); // the fundi's share goes out (never throws)
   } else if (outcome.state === 'failed') {
@@ -161,7 +189,7 @@ async function settle(orderId, outcome) {
 async function onProviderNotice(orderId) {
   const s = await provider.status({ orderId });
   if (String(orderId).startsWith('NJV')) { // a worker's registration fee, not a job payment
-    if (s.state !== 'pending') await require('./verificationFee').settle(orderId, s);
+    if (s.state !== 'pending') await require('./registrationFee').settle(orderId, s);
     return null;
   }
   if (s.state === 'pending') return null;
@@ -243,8 +271,8 @@ async function fileComplaint(user, requestId, note) {
     throw err;
   }
   await db('payouts').where({ id: row.id }).update({ complaint: text, complaint_at: db.fn.now(), complaint_status: 'open', complaint_note: null, resolved_at: null });
-  const admins = await db('users').where({ role: 'admin' }).pluck('id');
+  const admins = await db('users').where({ role: SUPER }).whereNull('disabled_at').pluck('id');
   for (const id of admins) await notify(id, 'payout_complaint', 'Payout complaint', `A fundi reported a problem with a payout (request ${requestId}).`);
 }
 
-module.exports = { confirmReceived, fileComplaint, payRequest, sendPayout, paymentView, settle, onProviderNotice, reconcilePending, PENDING_MS, split, validPrice, COMMISSION_PERCENT, NETWORKS, MIN_PRICE, MAX_PRICE };
+module.exports = { confirmReceived, fileComplaint, payRequest, sendPayout, markPayoutSent, paymentView, settle, onProviderNotice, reconcilePending, PENDING_MS, split, validPrice, COMMISSION_PERCENT, NETWORKS, MIN_PRICE, MAX_PRICE };

@@ -33,7 +33,7 @@ test.after(async () => {
 });
 
 test('customers and providers are grouped; a worker who requests shows in both', async () => {
-  const admin = await makeUser(`${PREFIX}00001`, 'admin');
+  const admin = await makeUser(`${PREFIX}00001`, 'superadmin');
   const cust = await makeUser(`${PREFIX}00002`, 'customer');
   const worker = await makeUser(`${PREFIX}00003`, 'fundi');
   const [pp] = await db('provider_profiles').insert({ user_id: worker.id, verification_status: 'verified' }).returning('id');

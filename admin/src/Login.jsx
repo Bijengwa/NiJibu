@@ -34,7 +34,7 @@ export default function Login({ onLoggedIn }) {
       <form className="card login-card" onSubmit={submit} noValidate>
         <div className="brand"><Logo /> <span>NiJibu Admin</span></div>
         <h1>Sign in</h1>
-        <p className="muted">Only NiJibu administrators can enter.</p>
+        <p className="muted">Only NiJibu staff can enter.</p>
 
         <label htmlFor="phone">Phone number</label>
         <div className="phone-row">

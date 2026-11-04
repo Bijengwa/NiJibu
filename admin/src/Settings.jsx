@@ -1,4 +1,5 @@
 import { Icon } from './icons'
+import { ROLE_LABEL } from './session'
 
 const MODES = [
   { id: 'light', label: 'Light', icon: 'sun' },
@@ -14,7 +15,7 @@ export default function Settings({ user, theme, onTheme, onLogout }) {
         <dl className="kv">
           <dt>Name</dt><dd>{user?.name || '-'}</dd>
           <dt>Phone</dt><dd>+{user?.phone}</dd>
-          <dt>Role</dt><dd>Administrator</dd>
+          <dt>Role</dt><dd>{ROLE_LABEL[user?.role] || user?.role}</dd>
         </dl>
       </section>
 

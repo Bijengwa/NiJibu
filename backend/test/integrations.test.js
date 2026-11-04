@@ -131,7 +131,7 @@ test('WhatsApp: used only after the user agreed, with the approved template; fal
   assert.equal(calls[0].init.headers.Authorization, 'Bearer wa-token');
   const sent = JSON.parse(calls[0].body);
   assert.deepEqual([sent.to, sent.type, sent.template.name, sent.template.language.code], [u.phone, 'template', 'nijibu_payment_received', 'sw']);
-  assert.deepEqual(sent.template.components, [{ type: 'body', parameters: [{ type: 'text', text: '22500' }] }]);
+  assert.deepEqual(sent.template.components, [{ type: 'body', parameters: [{ type: 'text', text: '22500' }, { type: 'text', text: '-' }] }]);
 
   // WhatsApp refuses -> SMS is the fallback, both tries are logged
   fake((url) => (url.includes('graph.facebook.com') ? reply({ error: { message: 'Template not approved' } }, 400) : reply({ SMSMessageData: { Recipients: [{ statusCode: 101, status: 'Success', messageId: 'ATXid_3' }] } })));

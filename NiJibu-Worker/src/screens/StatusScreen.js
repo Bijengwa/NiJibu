@@ -10,10 +10,9 @@ import { useSettings } from '../context/SettingsContext';
 
 const POLL_MS = 30000;
 
-// Shows if the fundi is pending, verified or rejected.
-//   onRetry: go back to the NIDA step (after a rejection)
+// Shows if the fundi is pending, verified or stopped by the admin (rejected).
 //   onPayout: open the payout step
-export default function StatusScreen({ onRetry, onPayout, onEditDetails }) {
+export default function StatusScreen({ onPayout, onEditDetails }) {
   const { colors, t } = useSettings();
   const { logout } = useAuth();
   const { provider, refresh } = useProvider();
@@ -72,11 +71,7 @@ export default function StatusScreen({ onRetry, onPayout, onEditDetails }) {
           </View>
         )}
 
-        {status === 'rejected' ? (
-          <Button title={t('tryAgain')} onPress={onRetry} style={styles.full} />
-        ) : (
-          <Button title={t('refresh')} variant="secondary" onPress={reload} loading={busy} style={styles.full} />
-        )}
+        <Button title={t('refresh')} variant="secondary" onPress={reload} loading={busy} style={styles.full} />
         <Button title={t('editDetails')} variant="secondary" onPress={onEditDetails} style={styles.full} />
         {!provider.payout_set && <Button title={t('addPayout')} variant="secondary" onPress={onPayout} style={styles.full} />}
         <Button title={t('logout')} variant="link" onPress={logout} />

@@ -8,7 +8,7 @@ const TOKEN_KEY = 'authToken';
 
 // Any account can work as a fundi: a fundi is a normal user with a provider profile.
 // Admin accounts use the admin web, not this app.
-const isFundi = (u) => !!u && u.role !== 'admin';
+const isFundi = (u) => !!u && !['superadmin', 'support', 'admin'].includes(u.role);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);

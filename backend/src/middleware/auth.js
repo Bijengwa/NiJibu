@@ -11,8 +11,8 @@ async function authenticate(token) {
     const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const user = await db('users')
       .where({ id: Number(payload.sub) })
-      .first('id', 'role', 'token_version', 'phone_verified_at');
-    if (!user || !user.phone_verified_at || user.token_version !== payload.tv) return null;
+      .first('id', 'role', 'token_version', 'phone_verified_at', 'disabled_at');
+    if (!user || !user.phone_verified_at || user.disabled_at || user.token_version !== payload.tv) return null;
     return { id: user.id, role: user.role };
   } catch (err) {
     return null;

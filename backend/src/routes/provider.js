@@ -22,7 +22,7 @@ async function readServiceIds(body) {
 }
 
 // A normal user becomes a provider: pick services from the list. Status stays "pending"
-// until verification (NIDA) or an admin approves. The app can never set "verified" itself.
+// until the worker pays the registration fee or an admin approves. The app can never set "verified" itself.
 router.post('/apply', async (req, res, next) => {
   try {
     const me = await db('users').where({ id: req.user.id }).first('name');

@@ -10,6 +10,7 @@
 //       SELCOM_WEBHOOK_URL (public address of /api/webhooks/selcom/<token>), SELCOM_WEBHOOK_TOKEN (long random text)
 const crypto = require('crypto');
 const { HttpError } = require('../lib/httpError');
+const usage = require('../lib/usage');
 
 const cfg = () => {
   const c = { base: process.env.SELCOM_BASE_URL, vendor: process.env.SELCOM_VENDOR_ID, key: process.env.SELCOM_API_KEY, secret: process.env.SELCOM_API_SECRET };
@@ -80,7 +81,12 @@ async function collect({ amount, phone, orderId, buyer = {} }) {
 
 // Where is this payment now?  -> { state: 'paid' | 'pending' | 'failed', failure?, transid? }
 async function status({ orderId }) {
-  const j = await call('GET', '/v1/checkout/order-status', { order_id: orderId });
+  const t0 = Date.now();
+  const j = await call('GET', '/v1/checkout/order-status', { order_id: orderId }).catch((e) => {
+    usage.record({ service: 'selcom', operation: 'status', ok: false, ms: Date.now() - t0 });
+    throw e;
+  });
+  usage.record({ service: 'selcom', operation: 'status', ms: Date.now() - t0 });
   const row = Array.isArray(j.data) ? j.data[0] : j.data;
   const s = String(row?.payment_status || '').toUpperCase();
   if (s === 'COMPLETED') return { state: 'paid', transid: row.transid || null };

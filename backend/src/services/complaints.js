@@ -2,6 +2,7 @@
 // Rules: only the customer or the worker of that request, only after a worker was assigned,
 // only within 7 days, and one complaint in progress per person per request.
 const db = require('../db');
+const { STAFF } = require('../lib/roles');
 const { HttpError } = require('../lib/httpError');
 const { notify } = require('./notify');
 
@@ -18,7 +19,7 @@ const REASONS = {
 const clean = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
 async function adminIds() {
-  return db('users').where({ role: 'admin' }).pluck('id');
+  return db('users').whereIn('role', STAFF).whereNull('disabled_at').pluck('id');
 }
 
 // The customer or the worker files a complaint about a request

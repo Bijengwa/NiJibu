@@ -1,16 +1,12 @@
 // The fundi's own profile for the Worker app: details, payout.
 const router = require('express').Router();
-const path = require('path');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { validLat, validLng } = require('../lib/geo');
 const { providerView } = require('../lib/providerView');
-const secret = require('../lib/secret');
 const { normalizeQuery } = require('../lib/text');
 const { findOrCreateJob } = require('../lib/jobs');
 
-// Old NIDA photos (from before photos were removed) stay here; only the admin can open them
-const NIDA_DIR = path.join(__dirname, '../../private/nida');
 const MAX_SERVICES = 5;
 const NETWORKS = ['mpesa', 'mixx', 'airtel', 'halopesa'];
 const EXPERIENCE = ['lt1', '1-3', '3-5', '5-10', '10+'];
@@ -135,4 +131,3 @@ router.put('/payout', async (req, res, next) => {
 });
 
 module.exports = router;
-module.exports.NIDA_DIR = NIDA_DIR;

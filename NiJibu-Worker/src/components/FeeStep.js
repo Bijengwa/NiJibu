@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { feeStatus, getFee, payFee } from '../api/provider';
 import { TEST_MODE } from '../config';
+import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { errorMessage } from '../utils/errors';
 import Button from './Button';
@@ -9,13 +10,13 @@ import { onlyDigits, validatePhone } from '../utils/validation';
 import Field from './Field';
 import { CheckIcon, PhoneIcon } from './Icons';
 
-// The registration fee, paid before every identity check. No refund; coming back to verify = a new payment.
-//   phone  : the worker's phone (9 digits or 255...). The payment prompt goes to this phone.
-//   onPaid(feeId): the payment is done
+// The one-time registration fee, paid after the phone code (the worker is logged in).
+//   onPaid(): the payment is done
 // The worker types the number to pay from (not picked automatically). No network to choose: Selcom needs only the number and the amount.
 // Demo mode (server PAYMENTS_MODE=mock): no real money. A phone ending 0000 is declined; ending 1111 waits ~8 seconds.
-export default function FeeStep({ phone, onPaid }) {
+export default function FeeStep({ onPaid }) {
   const { colors, t } = useSettings();
+  const { token } = useAuth();
   const [amount, setAmount] = useState(1000);
   const [payNumber, setPayNumber] = useState(''); // typed by the worker: the money is taken from this number
   const [numError, setNumError] = useState('');
@@ -26,19 +27,24 @@ export default function FeeStep({ phone, onPaid }) {
 
   useEffect(() => {
     alive.current = true;
-    getFee().then((r) => alive.current && setAmount(r.amount)).catch(() => {});
+    getFee(token).then((r) => {
+      if (!alive.current) return;
+      setAmount(r.amount);
+      if (r.paid) onPaid(); // paid before (for example the app closed right after paying)
+    }).catch(() => {});
     return () => {
       alive.current = false;
       clearInterval(timer.current);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   const done = (fee) => {
     clearInterval(timer.current);
     if (!alive.current) return;
     if (fee.status === 'paid') {
       setState('paid');
-      setTimeout(() => alive.current && onPaid(fee.id), 900); // a moment to see "Payment received"
+      setTimeout(() => alive.current && onPaid(), 900); // a moment to see "Payment received"
     } else {
       setState('failed');
       setError('');
@@ -51,7 +57,7 @@ export default function FeeStep({ phone, onPaid }) {
     clearInterval(timer.current);
     timer.current = setInterval(async () => {
       try {
-        const { fee: f } = await feeStatus({ id: fee.id, phone });
+        const { fee: f } = await feeStatus(token, fee.id);
         if (f.status !== 'pending') done(f);
       } catch {
         /* keep asking; a short network drop is fine */
@@ -67,7 +73,7 @@ export default function FeeStep({ phone, onPaid }) {
     setError('');
     setState('paying');
     try {
-      const { fee } = await payFee({ phone, payPhone: payNumber });
+      const { fee } = await payFee(token, { payPhone: payNumber });
       if (fee.status === 'pending') wait(fee);
       else done(fee);
     } catch (e) {

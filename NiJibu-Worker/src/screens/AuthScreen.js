@@ -21,7 +21,7 @@ import {
   validatePhone,
 } from '../utils/validation';
 
-// Login only. "Register" opens the worker sign-up (names, NIDA, questions).
+// Login only. "Register" opens the worker sign-up (details, phone code, fee).
 export default function AuthScreen({ onSignup, onForgot }) {
   const { colors, t } = useSettings();
   const { login, register } = useAuth();

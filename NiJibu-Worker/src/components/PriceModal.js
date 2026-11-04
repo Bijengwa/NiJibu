@@ -5,8 +5,8 @@ import { useSettings } from '../context/SettingsContext';
 import Field from './Field';
 import { WalletIcon } from './Icons';
 
-const COMMISSION = 10; // % kept by NiJibu (the server decides; this is only for the preview)
-export const MIN_PRICE = 1000;
+const COMMISSION = 13; // % kept by NiJibu (the server decides; this is only for the preview)
+export const MIN_PRICE = 15000; // the server refuses a lower price
 export const MAX_PRICE = 5000000;
 
 export const money = (n) => `TZS ${Number(n || 0).toLocaleString('en-US')}`;

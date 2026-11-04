@@ -76,8 +76,7 @@ export default function AccountScreen({ onPayout, onEditDetails }) {
 
       <View style={[styles.card, { backgroundColor: colors.surface }]}>
         <Row icon={(c) => <PhoneIcon size={22} color={c} />} label={t('phone')} value={`+${user.phone}`} />
-        <Row icon={(c) => <MailIcon size={22} color={c} />} label={t('email')} value={provider.email || user.email || t('payoutNotSet')} />
-        <Row icon={(c) => <ShieldCheckIcon size={22} color={c} />} label={t('nidaName')} value={provider.nida_name || '-'} last />
+        <Row icon={(c) => <MailIcon size={22} color={c} />} label={t('email')} value={provider.email || user.email || t('payoutNotSet')} last />
       </View>
 
       {/* The jobs of this fundi */}

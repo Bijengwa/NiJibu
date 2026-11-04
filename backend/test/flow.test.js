@@ -208,7 +208,9 @@ test('full job: offers go to the nearest 3, one wins, live tracking, all stages'
 
   // the fundi must set the price BEFORE the work starts
   assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`)).body.code, 'PRICE_REQUIRED');
-  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`, { price: 50 })).body.code, 'PRICE_REQUIRED');
+  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`, { price: 'free' })).body.code, 'PRICE_REQUIRED');
+  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`, { price: 50 })).body.code, 'PRICE_TOO_LOW');
+  assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`, { price: 14999 })).body.code, 'PRICE_TOO_LOW', 'the lowest price is 15,000');
   assert.equal((await api(winner, 'POST', `/api/requests/${rid}/start`, { price: 20000 })).status, 200);
   assert.equal((await api(customer, 'GET', `/api/requests/${rid}`)).body.request.agreed_price, 20000, 'the customer sees the price');
   assert.equal((await api(customer, 'POST', `/api/requests/${rid}/cancel`)).body.code, 'BAD_STATE'); // too late to cancel
@@ -253,7 +255,7 @@ test('full job: offers go to the nearest 3, one wins, live tracking, all stages'
   assert.equal((await api(winner, 'POST', `/api/provider/payments/${rid}/complaint`, { note: 'Money did not reach my phone' })).status, 200);
   assert.equal((await api(winner, 'POST', `/api/provider/payments/${rid}/complaint`, { note: 'Money did not reach my phone' })).body.code, 'COMPLAINT_OPEN');
   const admin2 = await makeUser('boss2', '255799900061');
-  await db('users').where({ id: admin2.id }).update({ role: 'admin' });
+  await db('users').where({ id: admin2.id }).update({ role: 'superadmin' });
   const open = (await api(admin2, 'GET', '/api/admin/complaints?status=active')).body.items;
   assert.equal(open.length, 1);
   assert.equal(open[0].message, 'Money did not reach my phone');
@@ -273,7 +275,7 @@ test('full job: offers go to the nearest 3, one wins, live tracking, all stages'
   const poId = (await db('payouts').where({ payment_id: failedRow.id }).first('id')).id;
   await db('payouts').where({ id: poId }).update({ status: 'failed', failure: 'DECLINED' });
   const boss = await makeUser('boss', '255799900060');
-  await db('users').where({ id: boss.id }).update({ role: 'admin' });
+  await db('users').where({ id: boss.id }).update({ role: 'superadmin' });
   const retried = await api(boss, 'POST', `/api/admin/payouts/${poId}/retry`);
   assert.equal(retried.body.payout.status, 'sent');
   for (const k of ['accepted_at', 'on_the_way_at', 'arrived_at', 'started_at', 'completed_at']) assert.ok(view[k], k);
@@ -382,7 +384,7 @@ test('provider onboarding, admin approval, security', async () => {
   const dobi = await serviceId('dobi');
   const person = await makeUser('person', '255799900051');
   const admin = await makeUser('admin', '255799900052');
-  await db('users').where({ id: admin.id }).update({ role: 'admin' });
+  await db('users').where({ id: admin.id }).update({ role: 'superadmin' });
   const nameless = await makeUser('nameless', '255799900053');
   await db('users').where({ id: nameless.id }).update({ name: null });
 

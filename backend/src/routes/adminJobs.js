@@ -1,10 +1,11 @@
 // Admin: jobs (registered, requested but missing, worker suggestions) and the dashboard summary.
-// Mounted inside routes/admin.js, so requireAuth + requireRole('admin') already ran.
+// Mounted inside routes/admin.js, so requireAuth + the staff gate already ran.
 const router = require('express').Router();
 const db = require('../db');
 const { notify } = require('../services/notify');
 const { normalizeQuery } = require('../lib/text');
 const { findOrCreateJob, wordsOf, uniqueSlug } = require('../lib/jobs');
+const { SUPER, SUPPORT, STAFF } = require('../lib/roles');
 
 const DAY = 24 * 60 * 60 * 1000;
 const bad = (res) => res.status(400).json({ error: 'Bad request', code: 'VALIDATION' });
@@ -619,6 +620,8 @@ router.get('/summary', async (req, res, next) => {
       return { ...r, completion_rate: r.requests ? Math.round((r.completed / r.requests) * 100) : null, no_provider_rate: r.requests ? Math.round((r.no_provider / r.requests) * 100) : null };
     };
 
+    const isSuper = req.user.role === SUPER;
+    const noStaff = (q) => q.whereNotIn('role', STAFF);
     const [providers_pending, suggestions, missing, complaints_open, payouts_failed, payments_failed, stuck, mToday, mWeek, dToday, dWeek, online, verified, topJobs, topMissing] = await Promise.all([
       count(db('provider_profiles').where({ verification_status: 'pending' })),
       rawN("select count(distinct coalesce(service_id::text, lower(name)))::int as n from service_suggestions where status = 'pending'"),
@@ -636,9 +639,63 @@ router.get('/summary', async (req, res, next) => {
         .select('normalized', db.raw('count(*)::int as searches'), db.raw('min(query) as query')).orderBy('searches', 'desc').limit(5),
     ]);
 
+    // Everything since the start (real numbers from the database)
+    const [people, providersAll, reqAll, complaintsAll, jobsCount] = await Promise.all([
+      noStaff(db('users')).first(
+        db.raw('count(*)::int as total'),
+        db.raw('count(*) filter (where created_at >= ?)::int as today', [today]),
+        db.raw('count(*) filter (where created_at >= ?)::int as week', [week]),
+        db.raw("count(*) filter (where role = 'customer' or exists (select 1 from requests r where r.customer_id = users.id))::int as customers")
+      ),
+      db('provider_profiles').first(
+        db.raw('count(*)::int as total'),
+        db.raw("count(*) filter (where verification_status = 'rejected')::int as rejected"),
+        db.raw('count(*) filter (where created_at >= ?)::int as week', [week])
+      ),
+      db('requests').first(
+        db.raw('count(*)::int as total'),
+        db.raw("count(*) filter (where status = 'completed')::int as completed"),
+        db.raw("count(*) filter (where status = 'cancelled')::int as cancelled"),
+        db.raw("count(*) filter (where status not in ('completed','cancelled','no_provider'))::int as active")
+      ),
+      db('complaints').first(db.raw('count(*)::int as total'), db.raw("count(*) filter (where status in ('resolved','rejected'))::int as closed")),
+      db('services').count('* as n').first(),
+    ]);
+
+    // Money, prices and staff are for superadmin only
+    let allMoney = null, registration = null, prices = null, staff = null;
+    if (isSuper) {
+      const [pay, out, fees, feeToday, feeWeek, price, staffRows] = await Promise.all([
+        db('payments').where({ status: 'paid' }).first(db.raw('count(*)::int as payments'), db.raw('coalesce(sum(amount),0)::int as gross'), db.raw('coalesce(sum(fee),0)::int as commission')),
+        db('payouts').first(db.raw("coalesce(sum(amount) filter (where status = 'sent'),0)::int as sent"), db.raw("coalesce(sum(amount) filter (where status <> 'sent'),0)::int as waiting")),
+        db('registration_fees').first(db.raw("count(*) filter (where status = 'paid')::int as paid"), db.raw("coalesce(sum(amount) filter (where status = 'paid'),0)::int as collected"), db.raw("count(*) filter (where status = 'pending')::int as pending")),
+        db('registration_fees').where({ status: 'paid' }).where('paid_at', '>=', today).sum({ n: 'amount' }).first(),
+        db('registration_fees').where({ status: 'paid' }).where('paid_at', '>=', week).sum({ n: 'amount' }).first(),
+        db('requests').whereNotNull('agreed_price').first(
+          db.raw('count(*)::int as priced_jobs'), db.raw('round(avg(agreed_price))::int as avg'), db.raw('round(percentile_cont(0.5) within group (order by agreed_price))::int as median'),
+          db.raw('min(agreed_price)::int as min'), db.raw('max(agreed_price)::int as max')
+        ),
+        db('users').whereIn('role', STAFF).orderByRaw("(role = 'superadmin') desc, created_at").select('id', 'name', 'role', 'disabled_at'),
+      ]);
+      allMoney = { ...pay, payouts_sent: out.sent, payouts_waiting: out.waiting };
+      registration = { today: Number(feeToday.n || 0), week: Number(feeWeek.n || 0), all: fees.collected, paid: fees.paid, pending: fees.pending };
+      prices = price;
+      staff = {
+        superadmin: staffRows.filter((x) => x.role === SUPER && !x.disabled_at).length,
+        support: staffRows.filter((x) => x.role === SUPPORT && !x.disabled_at).length,
+        disabled: staffRows.filter((x) => x.disabled_at).length,
+        items: staffRows.map((x) => ({ id: x.id, name: x.name, role: x.role, disabled: Boolean(x.disabled_at) })),
+      };
+    }
+
     res.json({
-      needs_action: { providers_pending, suggestions, missing_jobs: missing, complaints_open, failed_payments: payouts_failed + payments_failed, stuck_requests: stuck },
-      money: { today: mToday, week: mWeek },
+      role: req.user.role,
+      needs_action: { providers_pending, suggestions, missing_jobs: missing, complaints_open, failed_payments: isSuper ? payouts_failed + payments_failed : null, stuck_requests: stuck },
+      money: isSuper ? { today: mToday, week: mWeek, all: allMoney } : null,
+      registration,
+      prices,
+      staff,
+      totals: { users: people, providers: providersAll, requests: reqAll, complaints: complaintsAll, jobs: Number(jobsCount.n) },
       demand: { today: dToday, week: dWeek },
       supply: { online, verified },
       top_jobs: topJobs,

@@ -59,7 +59,7 @@ test('a miss is saved once, a known word is not a miss, customers cannot read th
 });
 
 test('admin sees the group, merges it into a job, and the customer is told', async () => {
-  const admin = await makeUser(`${PREFIX}00002`, 'admin');
+  const admin = await makeUser(`${PREFIX}00002`, 'superadmin');
   const c1 = await makeUser(`${PREFIX}00003`);
   const c2 = await makeUser(`${PREFIX}00004`);
   await api(c1, 'POST', '/api/services/misses', { query: 'ZZZ Kufulia Test' });
@@ -86,7 +86,7 @@ test('admin sees the group, merges it into a job, and the customer is told', asy
 });
 
 test('admin adds a new job from a miss and workers who wrote it are linked', async () => {
-  const admin = await makeUser(`${PREFIX}00005`, 'admin');
+  const admin = await makeUser(`${PREFIX}00005`, 'superadmin');
   const c = await makeUser(`${PREFIX}00006`);
   const w = await makeUser(`${PREFIX}00007`);
   const [p] = await db('provider_profiles').insert({ user_id: w.id, verification_status: 'verified' }).returning('id');
@@ -108,7 +108,7 @@ test('admin adds a new job from a miss and workers who wrote it are linked', asy
 });
 
 test('registered jobs and the dashboard summary answer', async () => {
-  const admin = await makeUser(`${PREFIX}00008`, 'admin');
+  const admin = await makeUser(`${PREFIX}00008`, 'superadmin');
   const reg = await api(admin, 'GET', '/api/admin/jobs/registered?days=30');
   assert.equal(reg.status, 200);
   assert.ok(reg.body.items.length > 0);
@@ -120,7 +120,7 @@ test('registered jobs and the dashboard summary answer', async () => {
 });
 
 test('search log shows what passed, what failed, and who searched again after failing', async () => {
-  const admin = await makeUser(`${PREFIX}00009`, 'admin');
+  const admin = await makeUser(`${PREFIX}00009`, 'superadmin');
   const c = await makeUser(`${PREFIX}00010`);
   const dobi = (await db('services').where({ slug: 'dobi' }).first('id')).id;
   const min = (m) => new Date(Date.now() - m * 60 * 1000);
@@ -152,7 +152,7 @@ test('a worker writes a job: it exists at once, a second worker joins it, the ad
   const w1 = await makeUser(`${PREFIX}00020`);
   const w2 = await makeUser(`${PREFIX}00021`);
   const c = await makeUser(`${PREFIX}00022`);
-  const admin = await makeUser(`${PREFIX}00023`, 'admin');
+  const admin = await makeUser(`${PREFIX}00023`, 'superadmin');
 
   const r1 = await api(w1, 'PUT', '/api/provider', writes('ZZZ Test Kuchomelea', 'ZZZ Test Welding'));
   assert.equal(r1.status, 200);
@@ -197,7 +197,7 @@ test('a worker writes a job: it exists at once, a second worker joins it, the ad
 
 test('merge moves workers and words to the existing job; reject switches a job off and it is not sent again', async () => {
   const w = await makeUser(`${PREFIX}00024`);
-  const admin = await makeUser(`${PREFIX}00025`, 'admin');
+  const admin = await makeUser(`${PREFIX}00025`, 'superadmin');
   const dobi = await db('services').where({ slug: 'dobi' }).first('id');
 
   await api(w, 'PUT', '/api/provider', writes('ZZZ Test Merge', 'ZZZ Test Merge'));

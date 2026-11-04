@@ -6,7 +6,7 @@ import { useAuth } from './AuthContext';
 
 const ProviderContext = createContext(null);
 
-// The fundi's profile and verification status (loaded after login).
+// The fundi's profile and status (loaded after login).
 export function ProviderProvider({ children }) {
   const { user, token, updateUser } = useAuth();
   const [provider, setProvider] = useState(null);
@@ -26,13 +26,13 @@ export function ProviderProvider({ children }) {
     if (!token || !user) return null;
     try {
       let r = await providerApi.getProvider(token);
-      // Just registered: send what was typed in the sign-up (names, NIDA) to the new account
-      const draft = !r.provider.nida_submitted ? await loadDraft() : null;
+      // Just registered: send what was typed in the sign-up (names, email) to the new account
+      const draft = await loadDraft();
       if (draft && String(user.phone || '').endsWith(draft.phone)) {
         const full = [draft.firstName, draft.middleName, draft.lastName].filter(Boolean).join(' ');
         updateUser((await updateProfile(token, { name: full, email: draft.email })).user);
-        r = await providerApi.submitIdentity(token, draft);
         await clearDraft();
+        r = await providerApi.getProvider(token);
       }
       setProvider(r.provider);
       setLoadError('');
@@ -77,14 +77,6 @@ export function ProviderProvider({ children }) {
         const r0 = await updateProfile(token, { name: full_name, email });
         updateUser(r0.user);
         const r = await providerApi.saveDetails(token, rest);
-        setProvider(r.provider);
-        return r.provider;
-      },
-      // Questions passed: link the NIDA number to this account (names come from the saved profile)
-      verifyNidaQuestions: async ({ nidaNumber, firstName: f, middleName: m, lastName: l }) => {
-        const [first, ...rest] = String(provider?.full_name || '').trim().split(/\s+/);
-        const last = rest.pop() || first;
-        const r = await providerApi.submitIdentity(token, { firstName: f || first, middleName: f ? m || '' : rest.join(' '), lastName: l || last, email: '', nidaNumber });
         setProvider(r.provider);
         return r.provider;
       },

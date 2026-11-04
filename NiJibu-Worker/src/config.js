@@ -14,6 +14,6 @@ function guessDevHost() {
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL || `http://${guessDevHost()}:${API_PORT}`;
 
-// Test mode: shows hints about the fake NIDA check (matches the server's NIDA_MODE=mock) and lets a phone
-// without a fingerprint sensor simulate the scan. Set EXPO_PUBLIC_TEST_MODE=false when real NIDA is connected.
+// Test mode: shows demo hints on the sign-up and fee screens (the phone code is printed in the backend terminal,
+// no real money moves). Set EXPO_PUBLIC_TEST_MODE=false for production.
 export const TEST_MODE = process.env.EXPO_PUBLIC_TEST_MODE !== 'false';

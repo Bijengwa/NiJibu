@@ -5,6 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { issueCode, checkCode } = require('../services/otp');
 const { publicUser } = require('../lib/user');
+const { isStaff } = require('../lib/roles');
 const { signToken } = require('../lib/token');
 const { notify } = require('../services/notify');
 const terms = require('../lib/terms');
@@ -191,7 +192,7 @@ router.post('/login', perPhone, async (req, res, next) => {
   }
 });
 
-// Admin web login: same phone + password, but only accounts with role 'admin'.
+// Admin web login: same phone + password, but only staff accounts (superadmin or customer care) that are not switched off.
 // Anyone else gets the same error as a wrong password (no hint that the account exists).
 router.post('/admin-login', perPhone, async (req, res, next) => {
   try {
@@ -202,7 +203,7 @@ router.post('/admin-login', perPhone, async (req, res, next) => {
     }
     const user = await db('users').where({ phone }).first();
     const ok = await bcrypt.compare(password, user?.password_hash || DUMMY_HASH);
-    if (!user || !user.password_hash || !ok || user.role !== 'admin' || !user.phone_verified_at) {
+    if (!user || !user.password_hash || !ok || !isStaff(user.role) || user.disabled_at || !user.phone_verified_at) {
       return fail(res, 401, 'INVALID_CREDENTIALS', 'Wrong phone or password');
     }
     res.json({ token: signToken(user), user: publicUser(user) });

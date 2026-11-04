@@ -13,6 +13,7 @@
 //                            { ok:false, failure }   not paid
 const { HttpError } = require('../lib/httpError');
 const selcom = require('./selcom');
+const usage = require('../lib/usage');
 
 const MODE = process.env.PAYMENTS_MODE || (process.env.NODE_ENV === 'production' ? 'selcom' : 'mock');
 const ref = (p) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -38,4 +39,8 @@ async function payout({ amount, number, network }) {
   return { ok: true, reference: ref('MOCK-OUT'), amount, network };
 }
 
-module.exports = { collect, status, payout, MODE };
+// The money really moved: remember the amount, the gateway fee is a % of it (admin Services page). Real gateway only.
+const recordCollected = (amount, tag = 'job') => { if (MODE === 'selcom') usage.record({ service: 'selcom', operation: 'collect', amount_tzs: amount, tag }); };
+const recordPayout = (amount) => { if (MODE === 'selcom') usage.record({ service: 'selcom', operation: 'payout', amount_tzs: amount }); };
+
+module.exports = { collect, status, payout, MODE, recordCollected, recordPayout };

@@ -47,7 +47,7 @@ function List() {
   return (
     <div className="stack wide">
       <p className="muted lead"><Icon name="requests" size={15} /> Every request: who asked, who did the job, did it go through, and the money for it.</p>
-      <div className="bar">
+      <div className="bar sticky-bar">
         <Tabs
           value={outcome}
           onChange={(v) => { setOutcome(v); setPage(1) }}

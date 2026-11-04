@@ -42,7 +42,7 @@ test.after(async () => {
 });
 
 test('complaints: who can file, 7 days, one at a time, admin answers, money waits', async () => {
-  const admin = await makeUser('Boss', `${PREFIX}00001`, 'admin');
+  const admin = await makeUser('Boss', `${PREFIX}00001`, 'superadmin');
   const customer = await makeUser('Asha Customer', `${PREFIX}00002`);
   const worker = await makeUser('Juma Fundi', `${PREFIX}00003`);
   const stranger = await makeUser('Neema Customer', `${PREFIX}00004`);
@@ -135,7 +135,7 @@ test('complaints: who can file, 7 days, one at a time, admin answers, money wait
 });
 
 test('admin portal gets a live signal when something changes (no refresh needed)', async () => {
-  const admin = await makeUser('Live Boss', `${PREFIX}00011`, 'admin');
+  const admin = await makeUser('Live Boss', `${PREFIX}00011`, 'superadmin');
   const customer = await makeUser('Live Customer', `${PREFIX}00012`);
   const worker = await makeUser('Live Fundi', `${PREFIX}00013`);
   const service = await db('services').where({ slug: 'dobi' }).first('id');

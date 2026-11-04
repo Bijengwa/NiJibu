@@ -2,6 +2,7 @@
 // Every state change is ONE guarded update (`where status = <expected>`), so double taps,
 // two providers accepting together, or a cancel racing with a stage change cannot corrupt a job.
 const db = require('../db');
+const { STAFF } = require('../lib/roles');
 const { HttpError } = require('../lib/httpError');
 const { distanceKm } = require('../lib/geo');
 const { avatarUrl } = require('../lib/user');
@@ -249,7 +250,7 @@ async function cancelRequest(user, requestId, reasonBody) {
   }
   // A job that failed after a worker was involved goes to the admin with its reason
   if (hadWorker) {
-    const admins = await db('users').where({ role: 'admin' }).pluck('id');
+    const admins = await db('users').whereIn('role', STAFF).whereNull('disabled_at').pluck('id');
     for (const id of admins) {
       await notify(id, 'job_failed', 'A job failed', `${r.code || `Request ${r.id}`}: ${asCustomer ? 'customer' : 'worker'} cancelled. ${why ? why.text : ''}`.trim(), { request_id: r.id, code: why?.code || null });
     }

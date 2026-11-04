@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icon, Logo } from './icons'
 import { NAV, SETTINGS } from './nav'
+import { canOpen, ROLE_LABEL } from './session'
 
 const COLLAPSE_KEY = 'nijibu_admin_collapsed'
 const readCollapsed = () => {
@@ -34,17 +35,31 @@ function NavLink({ item, active, collapsed, onGo }) {
   )
 }
 
+// The NiJibu logo is always on screen. When the menu is closed, pointing at the logo turns it into the menu button.
+export function LogoToggle({ onClick, label }) {
+  return (
+    <button className="logo-toggle" onClick={onClick} aria-label={label}>
+      <span className="lt-logo"><Logo size={28} /></span>
+      <span className="lt-menu"><Icon name="menu" size={20} /></span>
+    </button>
+  )
+}
+
 function Sidebar({ route, collapsed, onToggle, onGo }) {
   return (
     <div className="sidebar">
       <div className="side-head">
-        {!collapsed && <div className="brand"><Logo /><span>NiJibu Admin</span></div>}
-        <button className="icon-btn" onClick={onToggle} aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}>
-          <Icon name="menu" />
-        </button>
+        {collapsed ? (
+          <LogoToggle onClick={onToggle} label="Open menu" />
+        ) : (
+          <>
+            <div className="brand"><Logo size={28} /><span>NiJibu Admin</span></div>
+            <button className="icon-btn" onClick={onToggle} aria-label="Close menu" title="Close menu"><Icon name="panel" /></button>
+          </>
+        )}
       </div>
       <nav className="side-nav">
-        {NAV.map((n) => <NavLink key={n.path} item={n} active={route === n.path} collapsed={collapsed} onGo={onGo} />)}
+        {NAV.filter((n) => canOpen(n.page)).map((n) => <NavLink key={n.path} item={n} active={route === n.path} collapsed={collapsed} onGo={onGo} />)}
       </nav>
       <div className="side-foot">
         <NavLink item={SETTINGS} active={route === SETTINGS.path} collapsed={collapsed} onGo={onGo} />
@@ -73,8 +88,9 @@ function ProfileMenu({ user }) {
       {open && (
         <div className="menu" role="menu">
           <div className="menu-head">
-            <strong>{user?.name || 'Admin'}</strong>
+            <strong>{user?.name || 'Staff'}</strong>
             <span className="muted">+{user?.phone}</span>
+            <span className="muted small-text">{ROLE_LABEL[user?.role] || user?.role}</span>
           </div>
           <a href={`#${SETTINGS.path}`} className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
             <Icon name="settings" /> Settings
@@ -85,7 +101,8 @@ function ProfileMenu({ user }) {
   )
 }
 
-export default function Layout({ user, route, theme, onTheme, children }) {
+// back: { to: '#/users', label: 'Back to users' } puts an arrow button left of the page title
+export default function Layout({ user, route, theme, onTheme, back, children }) {
   const [drawer, setDrawer] = useState(false)
   const closeDrawer = useCallback(() => setDrawer(false), [])
   const isMobile = useIsMobile(closeDrawer)
@@ -104,7 +121,7 @@ export default function Layout({ user, route, theme, onTheme, children }) {
   }, [isMobile, drawer])
 
   const all = [...NAV, SETTINGS]
-  const title = all.find((n) => n.path === route)?.title || 'Dashboard'
+  const title = all.find((n) => n.path === route)?.title || 'Home'
   const nextTheme = { light: 'dark', dark: 'system', system: 'light' }[theme]
   const themeIcon = { light: 'sun', dark: 'moon', system: 'monitor' }[theme]
 
@@ -121,8 +138,11 @@ export default function Layout({ user, route, theme, onTheme, children }) {
 
       <div className="col">
         <header className="topbar">
-          {isMobile && (
-            <button className="icon-btn" onClick={() => setDrawer(true)} aria-label="Open menu"><Icon name="menu" /></button>
+          {isMobile && <LogoToggle onClick={() => setDrawer(true)} label="Open menu" />}
+          {back && (
+            <a className="icon-btn back-btn" href={back.to} aria-label={back.label} title={back.label}>
+              <Icon name="arrow" size={20} />
+            </a>
           )}
           <h1 className="page-title">{title}</h1>
           <div className="top-actions">

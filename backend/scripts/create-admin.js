@@ -1,4 +1,4 @@
-// Creates (or promotes) an admin account.
+// Creates (or promotes) a superadmin account. More staff (customer care) are created in the admin portal, page Staff.
 //   npm run create-admin -- 7XXXXXXXX "Full Name"
 // The password is typed when asked (not shown, not saved in shell history).
 require('dotenv').config();
@@ -47,11 +47,11 @@ function askHidden(question) {
   const password_hash = await bcrypt.hash(password, 12);
   const existing = await db('users').where({ phone }).first('id');
   if (existing) {
-    await db('users').where({ id: existing.id }).update({ role: 'admin', password_hash, phone_verified_at: db.fn.now(), token_version: db.raw('token_version + 1') });
-    console.log(`Updated ${phone} to admin.`);
+    await db('users').where({ id: existing.id }).update({ role: 'superadmin', disabled_at: null, password_hash, phone_verified_at: db.fn.now(), token_version: db.raw('token_version + 1') });
+    console.log(`Updated ${phone} to superadmin.`);
   } else {
-    await db('users').insert({ name, phone, password_hash, role: 'admin', phone_verified_at: db.fn.now() });
-    console.log(`Created admin ${phone}.`);
+    await db('users').insert({ name, phone, password_hash, role: 'superadmin', phone_verified_at: db.fn.now() });
+    console.log(`Created superadmin ${phone}.`);
   }
   await db.destroy();
 })().catch((e) => {

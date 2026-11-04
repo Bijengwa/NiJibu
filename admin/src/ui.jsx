@@ -48,3 +48,39 @@ export function Notice({ text, error }) {
   if (!text) return null
   return <p className={error ? 'error' : 'ok'} role={error ? 'alert' : 'status'}>{text}</p>
 }
+
+// The bar that stays at the top while the page scrolls, with the page's categories.
+// tabs: [{ id, label, count?, group? }]. A new `group` starts a small labelled section (for example Customer / Worker).
+export function SubTabs({ tabs, value, onChange, right }) {
+  return (
+    <div className="subbar">
+      <div className="subtabs" role="tablist">
+        {tabs.map((t, i) => {
+          const head = t.group && t.group !== tabs[i - 1]?.group ? <span className="subgroup">{t.group}</span> : null
+          return (
+            <span key={t.id} className="subtab-wrap">
+              {head}
+              <button role="tab" aria-selected={value === t.id} className={value === t.id ? 'on' : ''} onClick={() => onChange(t.id)}>
+                {t.label}{t.count ? <span className="count">{t.count}</span> : null}
+              </button>
+            </span>
+          )
+        })}
+      </div>
+      {right}
+    </div>
+  )
+}
+
+// One number in a box. href makes the whole box a link. tone: good | warn | bad
+export function Tile({ label, value, sub, tone, href }) {
+  const body = (
+    <>
+      <span className="muted">{label}</span>
+      <span className="big">{value}</span>
+      {sub && <span className="muted small-text">{sub}</span>}
+    </>
+  )
+  const cls = `card stat tile${tone ? ` ${tone}` : ''}`
+  return href ? <a href={href} className={`${cls} link-card`}>{body}</a> : <div className={cls}>{body}</div>
+}
