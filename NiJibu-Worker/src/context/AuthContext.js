@@ -1,15 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as authApi from '../api/auth';
 import { ApiError, setUnauthorizedHandler } from '../api/client';
-import { USE_MOCK_PROVIDER } from '../config';
 import { getItem, removeItem, setItem } from '../storage';
 
 const AuthContext = createContext(null);
 const TOKEN_KEY = 'authToken';
 
-// Only fundi accounts may use this app. While the server cannot create fundi accounts yet
-// (test mode), any verified account is accepted so the screens can be tested.
-const isFundi = (u) => USE_MOCK_PROVIDER || u?.role === 'fundi';
+// Any account can work as a fundi: a fundi is a normal user with a provider profile.
+// Admin accounts use the admin web, not this app.
+const isFundi = (u) => !!u && !['superadmin', 'support', 'admin'].includes(u.role);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -79,8 +78,8 @@ export function AuthProvider({ children }) {
     [handleAuth]
   );
 
-  const register = useCallback(async (phone, password) => {
-    const r = await authApi.register(phone, password);
+  const register = useCallback(async (phone, password, acceptTerms) => {
+    const r = await authApi.register(phone, password, acceptTerms);
     setPending({ phone, retryAfter: r.retry_after ?? 60 });
   }, []);
 

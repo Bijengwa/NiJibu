@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text } from 'react-native';
+import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../api/me';
 import Field from '../components/Field';
-import { EyeIcon, EyeOffIcon, LockIcon } from '../components/Icons';
+import ConfirmModal from '../components/ConfirmModal';
+import { EyeIcon, EyeOffIcon, LockIcon, TrashIcon } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -18,6 +19,7 @@ export default function DeleteAccountScreen({ onBack }) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [ask, setAsk] = useState(false);
 
   const doDelete = async () => {
     setLoading(true);
@@ -34,10 +36,7 @@ export default function DeleteAccountScreen({ onBack }) {
     if (loading) return;
     if (!password) return setError('passwordRequired');
     setError('');
-    Alert.alert(t('deleteAccountTitle'), t('deleteAccountBody'), [
-      { text: t('cancel'), style: 'cancel' },
-      { text: t('delete'), style: 'destructive', onPress: doDelete },
-    ]);
+    setAsk(true);
   };
 
   return (
@@ -83,6 +82,21 @@ export default function DeleteAccountScreen({ onBack }) {
           <Text style={styles.buttonText}>{loading ? t('pleaseWait') : t('deleteAccount')}</Text>
         </Pressable>
       </ScrollView>
+
+      <ConfirmModal
+        visible={ask}
+        danger
+        Icon={TrashIcon}
+        title={t('deleteAccountTitle')}
+        body={t('deleteAccountBody')}
+        confirmLabel={t('delete')}
+        cancelLabel={t('cancel')}
+        onCancel={() => setAsk(false)}
+        onConfirm={() => {
+          setAsk(false);
+          doDelete();
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }

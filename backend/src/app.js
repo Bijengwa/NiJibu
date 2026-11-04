@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const db = require('./db');
 const { requireAuth, requireRole } = require('./middleware/auth');
+const { SUPER, STAFF } = require('./lib/roles');
 
 const app = express();
 
@@ -11,6 +12,16 @@ app.use(helmet());
 // The mobile app does not need CORS. Allow browser origins only if listed in CORS_ORIGINS.
 app.use(cors({ origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : false }));
 app.use(express.json({ limit: '10kb' }));
+
+// Any successful change (from the apps or the admin) tells the open admin portals to reload their data
+app.use('/api', (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'OPTIONS') {
+    res.on('finish', () => {
+      if (res.statusCode < 400) require('./lib/adminEvents').notify();
+    });
+  }
+  next();
+});
 
 app.get('/health', async (req, res) => {
   try {
@@ -27,11 +38,17 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads'), { index: 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/me', require('./routes/me'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.use('/api/users', requireAuth, requireRole('admin'), require('./routes/users'));
-app.use('/api/admin', requireAuth, requireRole('admin'), require('./routes/admin'));
+app.use('/api/users', requireAuth, requireRole(SUPER), require('./routes/users'));
+// Staff only. Which staff role may call what is decided inside routes/admin.js
+app.use('/api/admin', requireAuth, requireRole(...STAFF), require('./routes/admin'));
 app.use('/api/services', require('./routes/services'));
+app.use('/api/provider/registration', require('./routes/registration'));
+app.use('/api/provider', require('./routes/providerProfile'));
 app.use('/api/provider', require('./routes/provider'));
+app.use('/api/places', require('./routes/places'));
+app.use('/api/usage', require('./routes/usage'));
 app.use('/api/requests', require('./routes/requests'));
+app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/offers', require('./routes/offers'));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));

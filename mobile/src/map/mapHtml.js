@@ -1,3 +1,4 @@
+import { DEFAULT_ICON_PATHS, SERVICE_ICON_PATHS } from '../data/serviceIcons';
 import { LEAFLET_CSS, LEAFLET_JS } from './leafletAssets';
 
 // The map page that runs inside the WebView (Leaflet + OpenStreetMap-based tiles).
@@ -29,9 +30,10 @@ export function buildMapHtml({ center, isDark }) {
   .me b { position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; background: rgba(26,115,232,.28); animation: pulse 2s ease-out infinite; }
   @keyframes pulse { 0% { transform: scale(.7); opacity: 1; } 100% { transform: scale(2.6); opacity: 0; } }
   .pin { width: 40px; height: 40px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #6F4226; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
-  .pin span { transform: rotate(45deg); font-size: 18px; line-height: 1; }
+  .pin span { transform: rotate(45deg); display: flex; align-items: center; justify-content: center; }
   .pin.sel { background: #1a73e8; width: 48px; height: 48px; }
-  .pin.sel span { font-size: 22px; }
+  .pin.live { background: #1a73e8; width: 46px; height: 46px; }
+  .target { width: 26px; height: 26px; border-radius: 50%; background: #C0392B; border: 4px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.45); }
 </style>
 </head>
 <body>
@@ -45,10 +47,32 @@ export function buildMapHtml({ center, isDark }) {
   map.attributionControl.setPrefix(false);
 
   var tileLayer = null;
+
+  // Job icons are SVG (no emojis). Built with createElementNS, so nothing is parsed as HTML.
+  var ICONS = ${JSON.stringify(SERVICE_ICON_PATHS)};
+  var ICON_DEFAULT = ${JSON.stringify(DEFAULT_ICON_PATHS)};
+  function iconEl(slug, size) {
+    var NS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width', size); svg.setAttribute('height', size);
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', '#fff'); svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+    (ICONS[slug] || ICON_DEFAULT).forEach(function (d) {
+      var path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    });
+    return svg;
+  }
   var meMarker = null;
   var pins = L.layerGroup().addTo(map);
   var pinEls = {};
   var selectedId = null;
+  var targetMarker = null;
+  var pickMarker = null;
+  var liveMarker = null;
+  var tracked = false;
 
   function send(msg) {
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(msg));
@@ -87,7 +111,7 @@ export function buildMapHtml({ center, isDark }) {
         var el = document.createElement('div');
         el.className = 'pin';
         var span = document.createElement('span');
-        span.textContent = p.emoji; // textContent: no HTML injection
+        span.appendChild(iconEl(p.slug, 22));
         el.appendChild(span);
         var icon = L.divIcon({ className: '', html: el, iconSize: [40, 40], iconAnchor: [20, 44] });
         var m = L.marker([p.lat, p.lng], { icon: icon, keyboard: false }).addTo(pins);
@@ -115,6 +139,65 @@ export function buildMapHtml({ center, isDark }) {
       });
     },
 
+    // The place where the customer waits
+    setTarget: function (lat, lng) {
+      if (!targetMarker) {
+        var icon = L.divIcon({ className: '', html: '<div class="target"></div>', iconSize: [26, 26], iconAnchor: [13, 13] });
+        targetMarker = L.marker([lat, lng], { icon: icon, interactive: false, keyboard: false, zIndexOffset: 500 }).addTo(map);
+      } else {
+        targetMarker.setLatLng([lat, lng]);
+      }
+    },
+    clearTarget: function () {
+      if (targetMarker) { map.removeLayer(targetMarker); targetMarker = null; }
+    },
+
+    // The fundi who is coming: moves smoothly when called again
+    setLive: function (lat, lng, slug) {
+      if (!liveMarker) {
+        var el = document.createElement('div');
+        el.className = 'pin live';
+        var span = document.createElement('span');
+        span.appendChild(iconEl(slug, 24));
+        el.appendChild(span);
+        var icon = L.divIcon({ className: '', html: el, iconSize: [46, 46], iconAnchor: [23, 50] });
+        liveMarker = L.marker([lat, lng], { icon: icon, interactive: false, keyboard: false, zIndexOffset: 900 }).addTo(map);
+      } else {
+        liveMarker.setLatLng([lat, lng]);
+      }
+    },
+    clearLive: function () {
+      if (liveMarker) { map.removeLayer(liveMarker); liveMarker = null; }
+      tracked = false;
+    },
+
+    // Keep all points in view above the sheet. Moves the camera only when a point is about to leave the screen.
+    track: function (points, padBottom, force) {
+      if (!points || !points.length) return;
+      var inner = map.getBounds().pad(-0.12);
+      var allIn = points.every(function (p) { return inner.contains(p); });
+      if (force || !tracked || !allIn) {
+        tracked = true;
+        map.fitBounds(L.latLngBounds(points), {
+          paddingTopLeft: [50, 80], paddingBottomRight: [50, (padBottom || 0) + 40],
+          maxZoom: 17, animate: true
+        });
+      }
+    },
+
+    // The place the customer chose by tapping the map or from the search list
+    setPick: function (lat, lng) {
+      if (!pickMarker) {
+        var icon = L.divIcon({ className: '', html: '<div class="target"></div>', iconSize: [26, 26], iconAnchor: [13, 13] });
+        pickMarker = L.marker([lat, lng], { icon: icon, interactive: false, keyboard: false, zIndexOffset: 600 }).addTo(map);
+      } else {
+        pickMarker.setLatLng([lat, lng]);
+      }
+    },
+    clearPick: function () {
+      if (pickMarker) { map.removeLayer(pickMarker); pickMarker = null; }
+    },
+
     recenter: function (lat, lng, padBottom) {
       var v = viewFor([lat, lng], 16, padBottom);
       map.flyTo(v.center, v.zoom, { duration: 0.6 });
@@ -122,7 +205,7 @@ export function buildMapHtml({ center, isDark }) {
   };
   window.api = api;
 
-  map.on('click', function () { send({ type: 'mapPress' }); });
+  map.on('click', function (e) { send({ type: 'mapPress', lat: e.latlng.lat, lng: e.latlng.lng }); });
   api.setTheme(${isDark ? 'true' : 'false'});
   send({ type: 'ready' });
 })();

@@ -21,8 +21,8 @@ import {
   validatePhone,
 } from '../utils/validation';
 
-// Login only. "Register" opens the worker sign-up (names, NIDA, questions, fingerprint).
-export default function AuthScreen({ onSignup }) {
+// Login only. "Register" opens the worker sign-up (details, phone code, fee).
+export default function AuthScreen({ onSignup, onForgot }) {
   const { colors, t } = useSettings();
   const { login, register } = useAuth();
   const insets = useSafeAreaInsets();
@@ -109,7 +109,7 @@ export default function AuthScreen({ onSignup }) {
           <Field
             label={t('phone')}
             icon={<PhoneIcon size={20} color={colors.textMuted} />}
-            prefix="🇹🇿 +255"
+            prefix="+255"
             value={phone}
             onChangeText={(v) => setPhone(onlyDigits(v))}
             placeholder="795259567"
@@ -154,6 +154,12 @@ export default function AuthScreen({ onSignup }) {
               onSubmitEditing={submit}
               error={errors.confirm ? t(errors.confirm) : ''}
             />
+          )}
+
+          {!isRegister && !!onForgot && (
+            <Pressable onPress={onForgot} hitSlop={10} accessibilityRole="button" style={{ alignSelf: 'flex-end', marginTop: 2 }}>
+              <Text style={[styles.link, { color: colors.primary }]}>{t('forgotLink')}</Text>
+            </Pressable>
           )}
 
           {!!errors.form && (

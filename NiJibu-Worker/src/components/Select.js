@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSettings } from '../context/SettingsContext';
 import { CheckIcon, ChevronRightIcon } from './Icons';
@@ -81,7 +81,8 @@ export default function Select({
       {error ? <Text style={[styles.error, { color: colors.error }]}>{error}</Text> : null}
       {!error && hint ? <Text style={[styles.hint, { color: colors.textMuted }]}>{hint}</Text> : null}
 
-      <Modal visible={open} transparent animationType="slide" onRequestClose={close}>
+      <Modal visible={open} transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <Pressable style={styles.backdrop} onPress={close} accessibilityLabel={t('done')} />
         <View
           style={[
@@ -138,6 +139,7 @@ export default function Select({
             }}
           />
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

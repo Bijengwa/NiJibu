@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { outcomeOf } = require('../lib/outcome');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requireProvider } = require('../middleware/provider');
@@ -21,7 +22,7 @@ async function readServiceIds(body) {
 }
 
 // A normal user becomes a provider: pick services from the list. Status stays "pending"
-// until verification (NIDA) or an admin approves. The app can never set "verified" itself.
+// until the worker pays the registration fee or an admin approves. The app can never set "verified" itself.
 router.post('/apply', async (req, res, next) => {
   try {
     const me = await db('users').where({ id: req.user.id }).first('name');
@@ -114,10 +115,45 @@ router.get('/offers', async (req, res, next) => {
       .where({ 'o.provider_id': req.provider.id, 'o.status': 'sent', 'r.status': 'searching' })
       .where('o.expires_at', '>', new Date())
       .orderBy('o.created_at')
-      .select('o.*', 'r.address', 's.id as s_id', 's.name_sw', 's.name_en');
+      .select('o.*', 'r.address', 's.id as s_id', 's.slug', 's.name_sw', 's.name_en');
     res.json({
-      items: rows.map((o) => offerView(o, { id: o.s_id, name_sw: o.name_sw, name_en: o.name_en }, o)),
+      items: rows.map((o) => offerView(o, { id: o.s_id, slug: o.slug, name_sw: o.name_sw, name_en: o.name_en }, o)),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Money: "I received it" / "I did not receive it"
+router.post('/payments/:requestId/received', async (req, res, next) => {
+  try {
+    await require('../services/payments').confirmReceived(req.user, Number(req.params.requestId));
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+router.post('/payments/:requestId/complaint', async (req, res, next) => {
+  try {
+    await require('../services/payments').fileComplaint(req.user, Number(req.params.requestId), req.body?.note);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Report a problem about a job (customer did not come, refused to pay, ...)
+router.post('/jobs/:requestId/complaint', async (req, res, next) => {
+  try {
+    const row = await require('../services/complaints').file(req.user, 'worker', Number(req.params.requestId), req.body || {});
+    res.status(201).json({ complaint: row });
+  } catch (err) {
+    next(err);
+  }
+});
+router.get('/complaints', async (req, res, next) => {
+  try {
+    res.json({ items: await require('../services/complaints').listMine(req.user.id, 'worker'), reasons: require('../services/complaints').REASONS.worker });
   } catch (err) {
     next(err);
   }
@@ -128,11 +164,44 @@ router.get('/jobs', async (req, res, next) => {
   try {
     const items = await db('requests as r')
       .join('services as s', 's.id', 'r.service_id')
+      .join('users as cu', 'cu.id', 'r.customer_id')
+      .leftJoin('payments as pay', 'pay.request_id', 'r.id')
+      .leftJoin('payouts as po', 'po.payment_id', 'pay.id')
       .where('r.provider_id', req.provider.id)
       .orderBy('r.created_at', 'desc')
       .limit(30)
-      .select('r.id', 'r.status', 'r.address', 'r.created_at', 's.name_sw', 's.name_en');
-    res.json({ items });
+      .select(
+        'r.id', 'r.code', 'r.status', 'r.address', 'r.created_at', 'r.completed_at', 'r.agreed_price as price', 'r.payout_due', 'r.cancelled_by', 'r.cancel_reason',
+        'pay.status as payment_status', 'pay.fee', 'pay.payout', 'po.status as payout_status', 'po.received_at', 'po.network as payout_network', 'po.complaint_status', 'po.complaint_note', 'r.customer_confirmed_at',
+        db.raw("(coalesce(r.completed_at, r.cancelled_at, r.accepted_at, r.created_at) > now() - interval '7 days') as can_complain"),
+        db.raw("(select c.status from complaints c where c.request_id = r.id and c.from_user_id = ? order by c.id desc limit 1) as report_status", [req.user.id]),
+        db.raw("(select c.reason from complaints c where c.request_id = r.id and c.from_user_id = ? order by c.id desc limit 1) as report_reason", [req.user.id]),
+        db.raw("(select c.message from complaints c where c.request_id = r.id and c.from_user_id = ? order by c.id desc limit 1) as report_message", [req.user.id]),
+        db.raw("(select c.admin_reply from complaints c where c.request_id = r.id and c.from_user_id = ? order by c.id desc limit 1) as report_reply", [req.user.id]),
+        'cu.name as customer_name', 's.slug', 's.name_sw', 's.name_en'
+      );
+    // Money summary over all jobs (not only the 30 shown)
+    const sum = await db('payments as pay')
+      .leftJoin('payouts as po', 'po.payment_id', 'pay.id')
+      .where('pay.provider_id', req.provider.id)
+      .where('pay.status', 'paid')
+      .select(
+        db.raw('coalesce(sum(pay.payout) filter (where po.status = \'sent\'), 0)::int as received'),
+        db.raw('coalesce(sum(pay.payout) filter (where po.status is distinct from \'sent\'), 0)::int as on_the_way')
+      )
+      .first();
+    const unpaid = await db('requests as r')
+      .leftJoin('payments as pay', function () { this.on('pay.request_id', 'r.id').andOn('pay.status', db.raw('?', ['paid'])); })
+      .where('r.provider_id', req.provider.id)
+      .where('r.status', 'completed')
+      .whereNotNull('r.agreed_price')
+      .whereNull('pay.id')
+      .sum({ n: 'r.agreed_price' })
+      .first();
+    res.json({
+      items: items.map((j) => ({ ...j, ...outcomeOf(j) })),
+      totals: { received: sum.received, on_the_way: sum.on_the_way, waiting_customer: Number(unpaid.n || 0) },
+    });
   } catch (err) {
     next(err);
   }

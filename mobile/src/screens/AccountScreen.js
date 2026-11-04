@@ -51,7 +51,8 @@ export default function AccountScreen({ onOpen }) {
 
       <View style={[styles.card, { backgroundColor: colors.surface }]}>
         <Row icon={(c) => <UserCircleIcon size={24} color={c} />} label={t('profile')} chevron onPress={() => onOpen('profile')} />
-        <Row icon={(c) => <SettingsIcon size={24} color={c} />} label={t('settings')} chevron last onPress={() => onOpen('settings')} />
+        <Row icon={(c) => <SettingsIcon size={24} color={c} />} label={t('settings')} chevron onPress={() => onOpen('settings')} />
+        <Row icon={(c) => <ShieldCheckIcon size={24} color={c} />} label={t('termsLink')} chevron last onPress={() => onOpen('terms')} />
       </View>
     </ScrollView>
   );

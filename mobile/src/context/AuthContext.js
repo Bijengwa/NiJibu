@@ -68,8 +68,8 @@ export function AuthProvider({ children }) {
     [handleAuth]
   );
 
-  const register = useCallback(async (phone, password) => {
-    const r = await authApi.register(phone, password);
+  const register = useCallback(async (phone, password, acceptTerms) => {
+    const r = await authApi.register(phone, password, acceptTerms);
     setPending({ phone, retryAfter: r.retry_after ?? 60 });
   }, []);
 

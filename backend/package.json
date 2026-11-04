@@ -5,12 +5,14 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "predev": "node ../scripts/free-port.js 3000",
     "dev": "node --watch src/server.js",
     "migrate": "knex migrate:latest",
     "migrate:rollback": "knex migrate:rollback",
     "migrate:make": "knex migrate:make",
     "seed": "knex seed:run",
-    "test": "node --test --test-concurrency=1 test/flow.test.js"
+    "create-admin": "node scripts/create-admin.js",
+    "test": "node --env-file=test/test.env --test --test-concurrency=1 test/flow.test.js test/worker.test.js test/jobs.test.js test/money.test.js test/complaints.test.js test/integrations.test.js test/auth.test.js test/services.test.js test/people.test.js test/staff.test.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
@@ -22,6 +24,7 @@
     "knex": "^3.3.0",
     "multer": "^2.0.2",
     "pg": "^8.23.1",
+    "selcom-apigw-client": "^1.0.0",
     "sharp": "^0.34.3",
     "socket.io": "^4.8.4"
   },

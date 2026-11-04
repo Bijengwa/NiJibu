@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BottomSheet from '../components/BottomSheet';
 import { LocateIcon } from '../components/Icons';
 import NearbyMap from '../components/NearbyMap';
-import { ProviderDetail, ProviderList, ResultsHeader } from '../components/home/ProviderParts';
+import { RequestForm, ResultsHeader, TripPanel } from '../components/home/RequestParts';
 import {
   RecentList,
   SearchBar,
@@ -24,31 +24,41 @@ import {
   ServiceCards,
   ServiceList,
 } from '../components/home/SearchParts';
+import { availability, reportMiss } from '../api/services';
+import { useAuth } from '../context/AuthContext';
+import { searchPlaces, reversePlace } from '../api/places';
+import { useRequest } from '../context/RequestContext';
+import { useServices } from '../context/ServicesContext';
 import { useSettings } from '../context/SettingsContext';
-import { searchProviders } from '../data/providers';
-import { SERVICES, getService, matchServices } from '../data/services';
+import { matchServices } from '../data/services';
 import useRecentSearches from '../hooks/useRecentSearches';
 import useUserLocation, { DEFAULT_LOCATION } from '../hooks/useUserLocation';
 
 const COLLAPSED_HEIGHT = 112; // handle + search bar
 
 // Home = map in the background + a bottom sheet (collapsed / half / expanded).
-// Sheet modes: browse (cards + recents) -> search (typing) -> results (fundis list) -> detail (one fundi)
+// Sheet modes: browse (cards + recents) -> search (typing) -> results (fundis near + request form)
+// When a request is open the sheet shows the trip (searching, on the way, arrived...) and the map follows the fundi.
 export default function HomeScreen({ active = true }) {
   const { colors, t, isDark } = useSettings();
+  const { token } = useAuth();
+  const { services, allServices } = useServices();
+  const { request, create, cancel, dismiss } = useRequest();
   const insets = useSafeAreaInsets();
   const loc = useUserLocation();
   const recents = useRecentSearches();
 
   const [height, setHeight] = useState(0);
   const [snap, setSnap] = useState('half');
-  const [mode, setMode] = useState('browse'); // browse | search | results | detail
+  const [mode, setMode] = useState('browse'); // browse | search | results
   const [query, setQuery] = useState('');
   const [service, setService] = useState(null);
-  const [providers, setProviders] = useState([]);
+  const [avail, setAvail] = useState(null); // { providers_nearby, nearest_km, nearest_eta_min, pins }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [selectedId, setSelectedId] = useState(null);
+  const [submitError, setSubmitError] = useState('');
+  const [place, setPlace] = useState(null); // the place chosen for the request { label, lat, lng }; null = use the GPS
+  const [picking, setPicking] = useState(false); // waiting for a tap on the map
   const mapRef = useRef(null);
   const requestId = useRef(0);
 
@@ -60,11 +70,27 @@ export default function HomeScreen({ active = true }) {
   // Part of the map hidden by the sheet (the map keeps the important things above it)
   const mapPadding = snap === 'collapsed' ? visible.collapsed : visible.half;
 
+  // The open request decides what the map and the sheet show
+  const tripService = request ? allServices.find((s) => s.id === request.service.id) || null : null;
   const mapProviders = useMemo(
-    () => providers.map((p) => ({ ...p, emoji: getService(p.service)?.emoji ?? '🔧' })),
-    [providers]
+    () => (request || !service || !avail ? [] : avail.pins.map((p) => ({ ...p, slug: service.key }))),
+    [request, service, avail]
   );
-  const selected = providers.find((p) => p.id === selectedId) || null;
+  const target = request ? { lat: request.lat, lng: request.lng } : null;
+  const p = request?.provider;
+  const live =
+    request && p && p.lat != null && ['accepted', 'on_the_way'].includes(request.status)
+      ? { lat: p.lat, lng: p.lng, slug: tripService?.key }
+      : null;
+
+  // A new stage of the trip: show the sheet at half height so the map stays visible
+  const stage = request?.status;
+  useEffect(() => {
+    if (stage) {
+      Keyboard.dismiss();
+      setSnap('half');
+    }
+  }, [stage]);
 
   // ----- actions -----
   const openSearch = () => {
@@ -85,55 +111,117 @@ export default function HomeScreen({ active = true }) {
       recents.add(svc.key);
       setService(svc);
       setQuery('');
-      setSelectedId(null);
-      setProviders([]);
+      setAvail(null);
       setError('');
+      setSubmitError('');
       setLoading(true);
       setMode('results');
       setSnap('half');
 
       const id = ++requestId.current;
       try {
-        const list = await searchProviders({ service: svc.key, lat: center.lat, lng: center.lng });
-        if (id === requestId.current) setProviders(list);
-      } catch {
-        if (id === requestId.current) setError('NETWORK');
+        // Search around the real GPS place (or the chosen place), not the default Dar es Salaam point
+        const here = place || loc.coords || (await loc.locate()) || center;
+        const r = await availability(token, svc.id, here);
+        if (id === requestId.current) setAvail(r);
+      } catch (e) {
+        if (id === requestId.current) setError(e.code || 'NETWORK');
       } finally {
         if (id === requestId.current) setLoading(false);
       }
     },
-    [center.lat, center.lng, recents]
+    [center.lat, center.lng, recents, token, place, loc]
   );
+
+  // Live: while the results are open, ask again every 8 s so fundis who go online or offline show up without a refresh
+  const watchKey = service && !request ? `${service.id}:${place?.lat ?? loc.coords?.lat}:${place?.lng ?? loc.coords?.lng}` : '';
+  useEffect(() => {
+    if (!watchKey || !token) return undefined;
+    const id = setInterval(async () => {
+      const here = place || loc.coords;
+      if (!here) return;
+      try {
+        setAvail(await availability(token, service.id, here, true));
+      } catch {}
+    }, 8000);
+    return () => clearInterval(id);
+  }, [watchKey, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearResults = useCallback(() => {
     requestId.current++;
     setService(null);
-    setProviders([]);
-    setSelectedId(null);
+    setAvail(null);
     setLoading(false);
     setError('');
+    setSubmitError('');
+    setPlace(null);
+    setPicking(false);
     setMode('browse');
     setSnap('half');
   }, []);
 
-  const pickProvider = useCallback((p) => {
-    setSelectedId(p.id);
-    setMode('detail');
-    setSnap('half');
-  }, []);
-
-  const backFromDetail = useCallback(() => {
-    setSelectedId(null);
-    setMode('results');
-  }, []);
-
-  const onMarkerPress = useCallback(
-    (id) => {
-      const p = providers.find((x) => x.id === id);
-      if (p) pickProvider(p);
+  // "Request fundi": use a fresh position, then ask the server
+  const submitRequest = useCallback(
+    async ({ address, note }) => {
+      setSubmitError('');
+      const c = place || loc.coords || (await loc.locate());
+      if (!c) {
+        setSubmitError('LOCATION_DENIED');
+        return;
+      }
+      try {
+        await create({ service_id: service.id, lat: c.lat, lng: c.lng, address, note });
+        clearResults(); // the trip panel takes over
+      } catch (e) {
+        if (e.code === 'ALREADY_OPEN' || e.code === 'PAYMENT_DUE') clearResults();
+        else setSubmitError(e.code || 'UNKNOWN');
+      }
     },
-    [providers, pickProvider]
+    [loc, service, create, clearResults, place]
   );
+
+  // "Where are you?": the box, the search list, the GPS button and the map tap all end in setPlace
+  const findPlaces = useCallback(async (q) => (await searchPlaces(token, q, center)).items, [token, center.lat, center.lng]);
+  const useGpsPlace = useCallback(async () => {
+    setPicking(false);
+    setPlace(null);
+    const c = loc.coords || (await loc.locate());
+    if (!c) return;
+    setPlace({ label: '', lat: c.lat, lng: c.lng }); // use it at once; the name comes after
+    mapRef.current?.recenter(c);
+    try {
+      const { place: p } = await reversePlace(token, c);
+      if (p) setPlace({ label: p.label, lat: c.lat, lng: c.lng });
+    } catch {
+      // no name found: the GPS point is still used
+    }
+  }, [loc, token]);
+  const startPicking = useCallback(() => {
+    setPicking(true);
+    setSnap('collapsed'); // show the map
+  }, []);
+  const onMapPress = useCallback(
+    async (lat, lng) => {
+      if (!picking) return;
+      setPicking(false);
+      setSnap('half');
+      setPlace({ label: '', lat, lng });
+      try {
+        const { place: p } = await reversePlace(token, { lat, lng });
+        setPlace({ label: p?.label || '', lat, lng });
+      } catch {
+        // keep the tapped point without a name
+      }
+    },
+    [picking, token]
+  );
+
+  // After "no fundi" or a cancel: close the trip and go back to the same service
+  const retry = useCallback(() => {
+    const svc = request ? allServices.find((s) => s.id === request.service.id) : null;
+    dismiss();
+    if (svc) pickService(svc);
+  }, [request, allServices, dismiss, pickService]);
 
   const recenter = async () => {
     const c = (await loc.locate()) || loc.coords || DEFAULT_LOCATION;
@@ -142,13 +230,13 @@ export default function HomeScreen({ active = true }) {
 
   // Android back button: step back inside Home first
   const latest = useRef({});
-  latest.current = { mode, snap, closeSearch, clearResults, backFromDetail };
+  latest.current = { mode, snap, closeSearch, clearResults, hasTrip: !!request };
   useEffect(() => {
     if (!active) return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       const s = latest.current;
-      if (s.mode === 'detail') s.backFromDetail();
-      else if (s.mode === 'search') s.closeSearch();
+      if (s.hasTrip) return false;
+      if (s.mode === 'search') s.closeSearch();
       else if (s.mode === 'results') s.clearResults();
       else if (s.snap === 'expanded') setSnap('half');
       else return false;
@@ -158,24 +246,51 @@ export default function HomeScreen({ active = true }) {
   }, [active]);
 
   // ----- sheet content -----
-  const matches = matchServices(query);
+  const matches = matchServices(allServices, query);
   const searching = query.trim().length > 0;
 
+  // Nothing matches what the customer typed: after a short pause tell the server (once per word),
+  // so the admin sees which jobs people ask for that we do not have yet.
+  const missSent = useRef('');
+  const noMatch = searching && matches.length === 0;
+  useEffect(() => {
+    const q = query.trim();
+    if (mode !== 'search' || !noMatch || q.length < 3 || services.length === 0) return;
+    const key = q.toLowerCase();
+    const timer = setTimeout(() => {
+      if (missSent.current === key) return;
+      missSent.current = key;
+      reportMiss(token, q, loc.coords).catch(() => {}); // never bothers the customer
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [query, mode, noMatch, services.length, token, loc.coords]);
+
   const header = (() => {
+    if (request) return null;
     if (mode === 'search') return <SearchInput value={query} onChange={setQuery} onBack={closeSearch} />;
     if (mode === 'results' && service)
-      return <ResultsHeader service={service} count={providers.length} loading={loading} onClose={clearResults} />;
-    if (mode === 'detail') return null;
+      return (
+        <ResultsHeader
+          service={service}
+          count={avail?.providers_nearby ?? 0}
+          nearestEta={avail?.nearest_eta_min}
+          loading={loading}
+          onClose={clearResults}
+        />
+      );
     return <SearchBar onPress={openSearch} />;
   })();
 
   const body = (() => {
+    if (request) {
+      return <TripPanel request={request} service={tripService} onCancel={cancel} onDismiss={dismiss} onRetry={retry} />;
+    }
     if (mode === 'search') {
       if (!searching) {
         return (
           <>
             <RecentList keys={recents.items} onPick={pickService} onClear={recents.clear} />
-            <ServiceList title={t('servicesAvailable')} services={SERVICES} onPick={pickService} />
+            <ServiceList title={t('servicesAvailable')} services={services} onPick={pickService} />
           </>
         );
       }
@@ -183,12 +298,31 @@ export default function HomeScreen({ active = true }) {
       return (
         <>
           <Text style={[styles.empty, { color: colors.textMuted }]}>{t('noServiceMatch')}</Text>
-          <ServiceList title={t('servicesAvailable')} services={SERVICES} onPick={pickService} />
+          {query.trim().length >= 3 && <Text style={[styles.emptyNote, { color: colors.textMuted }]}>{t('missNoted')}</Text>}
+          <ServiceList title={t('servicesAvailable')} services={services} onPick={pickService} />
         </>
       );
     }
-    if (mode === 'results') return <ProviderList providers={providers} loading={loading} error={error} onPick={pickProvider} />;
-    if (mode === 'detail' && selected) return <ProviderDetail provider={selected} onBack={backFromDetail} />;
+    if (mode === 'results' && service) {
+      return (
+        <RequestForm
+          loading={loading}
+          error={error}
+          nearest={avail?.nearest_km ?? null}
+          hasLocation={!!place || (loc.status === 'granted' && !!loc.coords)}
+          onFocus={() => setSnap('expanded')}
+          onSubmit={submitRequest}
+          onRetryLocation={() => (loc.status === 'denied' ? Linking.openSettings() : loc.locate())}
+          submitError={submitError}
+          place={place}
+          picking={picking}
+          onSearch={findPlaces}
+          onPlace={setPlace}
+          onUseGps={useGpsPlace}
+          onPickOnMap={startPicking}
+        />
+      );
+    }
     return (
       <>
         <ServiceCards onPick={pickService} />
@@ -207,10 +341,13 @@ export default function HomeScreen({ active = true }) {
           center={center}
           user={loc.coords}
           providers={mapProviders}
-          selectedId={selectedId}
+          selectedId={null}
           isDark={isDark}
           bottomPadding={mapPadding}
-          onMarkerPress={onMarkerPress}
+          target={target}
+          live={live}
+          pick={mode === 'results' && !request ? place : null}
+          onMapPress={onMapPress}
         />
 
         {locationBanner && (
@@ -269,6 +406,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   header: { paddingBottom: 4 },
   empty: { fontSize: 15, textAlign: 'center', marginTop: 24 },
+  emptyNote: { fontSize: 13, textAlign: 'center', marginTop: 6, marginBottom: 8 },
   locate: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
   banner: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 14, elevation: 4 },
   bannerText: { flex: 1, fontSize: 14 },

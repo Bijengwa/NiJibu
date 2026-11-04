@@ -1,9 +1,12 @@
-// Same services and keys as the customer app (V1): dobi, bomba, viatu.
-// A fundi can offer one or more.
-export const SERVICES = [
-  { key: 'dobi', emoji: '🧺', name: 'svcDobi', sub: 'svcDobiSub' },
-  { key: 'bomba', emoji: '🔧', name: 'svcPlumber', sub: 'svcPlumberSub' },
-  { key: 'viatu', emoji: '👞', name: 'svcShoe', sub: 'svcShoeSub' },
-];
 
-export const getService = (key) => SERVICES.find((s) => s.key === key);
+// The list of jobs comes from the server. Icons are SVG (see serviceIcons.js and components/ServiceIcon.js).
+
+// Server row -> { id, key, label } in the app language
+export const toService = (row, lang) => ({
+  id: row.id,
+  key: row.slug,
+  label: lang === 'sw' ? row.name_sw : row.name_en,
+});
+
+// A service object from an offer / request ({ id, name_sw, name_en }) -> label
+export const labelOf = (svc, lang) => (svc ? (lang === 'sw' ? svc.name_sw : svc.name_en) : '');

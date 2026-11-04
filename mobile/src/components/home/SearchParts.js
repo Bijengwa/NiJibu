@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChevronLeftIcon, ClockIcon, CloseIcon, SearchIcon } from '../Icons';
-import { SERVICES, getService } from '../../data/services';
+import ServiceIcon from '../ServiceIcon';
+import { useServices } from '../../context/ServicesContext';
 import { useSettings } from '../../context/SettingsContext';
 
 // The bar shown in the sheet. Tapping it opens the full search.
@@ -61,19 +62,34 @@ export function SearchInput({ value, onChange, onBack }) {
 // Big tiles: the services we have
 export function ServiceCards({ onPick }) {
   const { colors, t } = useSettings();
+  const { services, loading, error, reload } = useServices();
+  if (!services.length) {
+    return (
+      <View style={{ marginTop: 28, alignItems: 'center' }}>
+        <Text style={{ color: error ? colors.error : colors.textMuted, fontSize: 15, textAlign: 'center' }}>
+          {loading ? t('pleaseWait') : t(error || 'UNKNOWN')}
+        </Text>
+        {!loading && (
+          <Pressable onPress={reload} hitSlop={10} style={{ marginTop: 12 }} accessibilityRole="button">
+            <Text style={{ color: colors.primary, fontSize: 15, fontWeight: '800' }}>{t('tryAgain')}</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
   return (
     <View style={styles.cards}>
-      {SERVICES.map((s) => (
+      {services.map((s) => (
         <Pressable
           key={s.key}
           onPress={() => onPick(s)}
           style={({ pressed }) => [styles.card, { backgroundColor: colors.surface, opacity: pressed ? 0.7 : 1 }]}
           accessibilityRole="button"
-          accessibilityLabel={t(s.name)}
+          accessibilityLabel={s.label}
         >
-          <Text style={styles.emoji}>{s.emoji}</Text>
-          <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={1}>{t(s.name)}</Text>
-          <Text style={[styles.cardSub, { color: colors.textMuted }]} numberOfLines={1}>{t(s.sub)}</Text>
+          <ServiceIcon slug={s.key} size={30} color={colors.primary} />
+          <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={2}>{s.label}</Text>
+          <Text style={[styles.cardSub, { color: colors.textMuted }]} numberOfLines={1}>{s.sub}</Text>
         </Pressable>
       ))}
     </View>
@@ -81,7 +97,7 @@ export function ServiceCards({ onPick }) {
 }
 
 function ServiceRow({ icon, service, onPress }) {
-  const { colors, t } = useSettings();
+  const { colors } = useSettings();
   return (
     <Pressable
       onPress={onPress}
@@ -90,8 +106,8 @@ function ServiceRow({ icon, service, onPress }) {
     >
       <View style={[styles.rowIcon, { backgroundColor: colors.surface }]}>{icon}</View>
       <View style={{ flex: 1 }}>
-        <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>{t(service.name)}</Text>
-        <Text style={[styles.rowSub, { color: colors.textMuted }]} numberOfLines={1}>{t(service.sub)}</Text>
+        <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>{service.label}</Text>
+        <Text style={[styles.rowSub, { color: colors.textMuted }]} numberOfLines={1}>{service.sub}</Text>
       </View>
     </Pressable>
   );
@@ -114,6 +130,7 @@ export function SectionTitle({ children, action, onAction }) {
 // Recent searches (service keys)
 export function RecentList({ keys, onPick, onClear }) {
   const { colors, t } = useSettings();
+  const { getService } = useServices();
   const services = keys.map(getService).filter(Boolean);
   if (!services.length) return null;
   return (
@@ -128,11 +145,12 @@ export function RecentList({ keys, onPick, onClear }) {
 
 // Suggestions while typing (or all services when the box is empty)
 export function ServiceList({ title, services, onPick }) {
+  const { colors } = useSettings();
   return (
     <View>
       {title ? <SectionTitle>{title}</SectionTitle> : null}
       {services.map((s) => (
-        <ServiceRow key={s.key} service={s} icon={<Text style={{ fontSize: 22 }}>{s.emoji}</Text>} onPress={() => onPick(s)} />
+        <ServiceRow key={s.key} service={s} icon={<ServiceIcon slug={s.key} size={22} color={colors.primary} />} onPress={() => onPick(s)} />
       ))}
     </View>
   );
@@ -145,10 +163,10 @@ const styles = StyleSheet.create({
   back: { width: 36, height: 44, alignItems: 'center', justifyContent: 'center' },
   input: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: 52, borderRadius: 14, paddingHorizontal: 14 },
   inputText: { flex: 1, fontSize: 17, height: '100%' },
-  cards: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  card: { flex: 1, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center' },
-  emoji: { fontSize: 32, marginBottom: 6 },
-  cardTitle: { fontSize: 14, fontWeight: '700' },
+  cards: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16 },
+  card: { width: '31%', flexGrow: 1, minHeight: 112, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center' },
+  emoji: { marginBottom: 6 },
+  cardTitle: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
   cardSub: { fontSize: 12, marginTop: 2 },
   sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 22, marginBottom: 6 },
   section: { fontSize: 17, fontWeight: '700' },

@@ -15,16 +15,19 @@ export async function getCoords() {
   const perm = await Location.requestForegroundPermissionsAsync();
   if (perm.status !== 'granted') throw new LocationError('LOCATION_DENIED');
   try {
-    return toCoords(await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+    // A position from the last 2 minutes is good enough and instant
+    const last = await Location.getLastKnownPositionAsync({ maxAge: 120000, requiredAccuracy: 300 }).catch(() => null);
+    if (last) return toCoords(last);
+    return toCoords(await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }));
   } catch {
     throw new LocationError('LOCATION_UNAVAILABLE');
   }
 }
 
-// Calls onChange when the fundi moves (about every 15 s or 50 m). Returns { remove() }.
-export const watchCoords = (onChange) =>
+// Calls onChange when the fundi moves (default every 15 s or 50 m). Returns { remove() }.
+export const watchCoords = (onChange, { timeInterval = 15000, distanceInterval = 50 } = {}) =>
   Location.watchPositionAsync(
-    { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 50 },
+    { accuracy: Location.Accuracy.Balanced, timeInterval, distanceInterval },
     (p) => onChange(toCoords(p))
   );
 

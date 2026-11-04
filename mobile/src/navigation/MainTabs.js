@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { BackHandler, View } from 'react-native';
 import TabBar from '../components/TabBar';
+import { RequestProvider } from '../context/RequestContext';
+import { ServicesProvider } from '../context/ServicesContext';
 import { useSettings } from '../context/SettingsContext';
 import useNotifications from '../hooks/useNotifications';
 import AccountScreen from '../screens/AccountScreen';
@@ -11,6 +13,7 @@ import HomeScreen from '../screens/HomeScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import TermsViewScreen from '../screens/TermsViewScreen';
 
 // Tiny navigator: 4 tabs (home, activity, notifications, account) + a stack of inner screens.
 // (Can be replaced by Expo Router later without touching the screens' content.)
@@ -19,9 +22,21 @@ const INNER = {
   settings: SettingsScreen,
   changePassword: ChangePasswordScreen,
   deleteAccount: DeleteAccountScreen,
+  terms: TermsViewScreen,
 };
 
+// Services and the open request are shared by the Home and Activity tabs.
 export default function MainTabs() {
+  return (
+    <ServicesProvider>
+      <RequestProvider>
+        <Tabs />
+      </RequestProvider>
+    </ServicesProvider>
+  );
+}
+
+function Tabs() {
   const { colors } = useSettings();
   const notifications = useNotifications();
   const [tab, setTab] = useState('home');

@@ -1,6 +1,6 @@
 import { getItem, removeItem, setItem } from '../storage';
 
-// What the fundi typed before the account existed (names, NIDA number).
+// What the fundi typed before the account existed (names, email).
 // Kept on the phone until the phone number is confirmed with the code; then it is sent to the server.
 // The password is never kept here.
 const KEY = 'workerSignupDraft';

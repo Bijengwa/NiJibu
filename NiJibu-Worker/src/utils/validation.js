@@ -54,16 +54,6 @@ export function timeAgo(t, iso) {
   return `${Math.floor(s / 86400)} ${t('dayAgo')}`;
 }
 
-// NIDA number: 20 digits, shown as 19900101-12345-12345-12 while typing
-export const onlyNidaDigits = (text) => text.replace(/\D/g, '').slice(0, 20);
-
-export function formatNida(digits) {
-  const parts = [digits.slice(0, 8), digits.slice(8, 13), digits.slice(13, 18), digits.slice(18, 20)];
-  return parts.filter(Boolean).join('-');
-}
-
-export const validateNida = (digits) => (/^\d{20}$/.test(digits) ? '' : 'nidaInvalid');
-
 // Dropdowns: a choice is required
 export const validateRequired = (value) => (value && value.length ? '' : 'required');
 
