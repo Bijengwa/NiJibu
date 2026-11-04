@@ -32,14 +32,18 @@ export function ServicesProvider({ children }) {
   }, [load]);
 
   const value = useMemo(() => {
-    const services = buildServices(rows, lang);
+    // Jobs a fundi wrote that the admin has not approved yet still work: customers can find them by search,
+    // but they are not shown in the browse list.
+    const all = buildServices(rows, lang);
+    const services = all.filter((s) => s.status !== 'pending');
     return {
       services,
+      allServices: all,
       loading,
       error,
       reload: load,
-      getService: (key) => services.find((s) => s.key === legacyKey(key)),
-      getServiceById: (id) => services.find((s) => s.id === id),
+      getService: (key) => all.find((s) => s.key === legacyKey(key)),
+      getServiceById: (id) => all.find((s) => s.id === id),
     };
   }, [rows, lang, loading, error, load]);
 

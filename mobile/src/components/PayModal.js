@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { confirmRequest, payRequest } from '../api/requests';
+import { confirmRequest, getRequest, payRequest } from '../api/requests';
 import { useAuth } from '../context/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSettings } from '../context/SettingsContext';
@@ -22,6 +22,7 @@ export default function PayModal({ visible, request, onClose, onPaid }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const [waiting, setWaiting] = useState(false); // the customer must approve the payment on the phone
   const [confirmed, setConfirmed] = useState(false); // the customer said the work is done
 
   // Start with the number of the account (without 255)
@@ -32,8 +33,37 @@ export default function PayModal({ visible, request, onClose, onPaid }) {
       setDone(false);
       setBusy(false);
       setConfirmed(!!request?.customer_confirmed_at);
+      setWaiting((request?.payment?.status || request?.payment_status) === 'pending');
     }
   }, [visible, user?.phone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Waiting for the phone approval: check every 3 seconds (the server also pushes the result)
+  useEffect(() => {
+    if (!waiting || !visible) return undefined;
+    let stop = false;
+    const check = async () => {
+      try {
+        const { request: fresh } = await getRequest(token, request.id);
+        if (stop) return;
+        const st = fresh?.payment?.status;
+        if (st === 'paid') {
+          setWaiting(false);
+          setDone(true);
+          onPaid?.(fresh);
+        } else if (st === 'failed') {
+          setWaiting(false);
+          setError('PAYMENT_FAILED');
+        }
+      } catch {
+        // network blip: try again on the next round
+      }
+    };
+    const id = setInterval(check, 3000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [waiting, visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Step 1: "yes, the work is done"
   const confirm = async () => {
@@ -59,8 +89,12 @@ export default function PayModal({ visible, request, onClose, onPaid }) {
     setError('');
     try {
       const r = await payRequest(token, request.id, { network, phone: digits });
-      setDone(true);
-      onPaid?.(r.request);
+      if (r.request?.payment?.status === 'pending') {
+        setWaiting(true); // mobile money: approve on the phone, the result comes a little later
+      } else {
+        setDone(true);
+        onPaid?.(r.request);
+      }
     } catch (e) {
       setError(e.code || 'UNKNOWN');
     } finally {
@@ -79,7 +113,7 @@ export default function PayModal({ visible, request, onClose, onPaid }) {
             <View style={[styles.badge, { backgroundColor: colors.surface, borderColor: done ? colors.success : colors.primary }]}>
               {done ? <CheckIcon size={30} color={colors.success} strokeWidth={2.6} /> : <WalletIcon size={28} color={colors.primary} />}
             </View>
-            <Text style={[styles.title, { color: colors.text }]}>{done ? t('payDoneTitle') : confirmed ? t('payTitle') : t('confirmTitle')}</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{done ? t('payDoneTitle') : waiting ? t('payWaitTitle') : confirmed ? t('payTitle') : t('confirmTitle')}</Text>
             <Text style={[styles.amount, { color: done ? colors.success : colors.primary }]}>{money(request.agreed_price ?? request.price)}</Text>
 
             {done ? (
@@ -87,6 +121,13 @@ export default function PayModal({ visible, request, onClose, onPaid }) {
                 <Text style={[styles.body, { color: colors.textMuted }]}>{t('payDoneBody')}</Text>
                 <Pressable onPress={onClose} style={[styles.main, { backgroundColor: colors.primary }]} accessibilityRole="button">
                   <Text style={[styles.mainText, { color: colors.onPrimary }]}>{t('done')}</Text>
+                </Pressable>
+              </>
+            ) : waiting ? (
+              <>
+                <Text style={[styles.body, { color: colors.textMuted }]}>{t('payWaitBody')}</Text>
+                <Pressable onPress={onClose} style={[styles.main, { backgroundColor: colors.surface }]} accessibilityRole="button">
+                  <Text style={[styles.mainText, { color: colors.text }]}>{t('close')}</Text>
                 </Pressable>
               </>
             ) : !confirmed ? (

@@ -11,3 +11,6 @@ export const payRequest = (token, id, { network, phone }) =>
 // The customer says the work is done (then he can pay)
 export const confirmRequest = (token, id) => request(`/api/requests/${id}/confirm`, { method: 'POST', token });
 export const listRequests = (token) => request('/api/requests', { token });
+// Report a problem about a request (a worker was assigned, within 7 days)
+export const reportProblem = (token, id, reason, message) =>
+  request(`/api/requests/${id}/complaint`, { method: 'POST', token, body: { reason, message } });

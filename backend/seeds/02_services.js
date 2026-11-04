@@ -13,6 +13,9 @@ const SERVICES = [
   { slug: 'fundi-magari', name_sw: 'Fundi magari', name_en: 'Mechanic' },
 ];
 
+// The words customers type for each job (the other names). They are saved once; the admin edits them later.
+const { WORDS } = require('../migrations/20240113000000_seed_job_aliases');
+
 exports.seed = async (knex) => {
-  await knex('services').insert(SERVICES).onConflict('slug').merge(['name_sw', 'name_en']);
+  await knex('services').insert(SERVICES.map((s) => ({ ...s, aliases: `{${(WORDS[s.slug] || []).map((w) => `"${w}"`).join(',')}}` }))).onConflict('slug').merge(['name_sw', 'name_en']);
 };

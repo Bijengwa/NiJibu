@@ -1,122 +1,69 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useCallback, useEffect, useState } from 'react'
+import { api, getToken, setToken, setUnauthorizedHandler } from './api'
+import { applyTheme, getTheme } from './theme'
+import { NAV, SETTINGS } from './nav'
+import Login from './Login'
+import Layout from './Layout'
+import Dashboard from './Dashboard'
+import Settings from './Settings'
+import Jobs from './Jobs'
+import Users from './Users'
+import Requests from './Requests'
+import Payments from './Payments'
+import Complaints from './Complaints'
+import Stub from './Stub'
+import { startLive } from './live'
 
-function App() {
-  const [count, setCount] = useState(0)
+const readHash = () => window.location.hash.replace(/^#/, '') || '/'
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+export default function App() {
+  const [user, setUser] = useState(null)
+  const [checking, setChecking] = useState(Boolean(getToken()))
+  const [hash, setHash] = useState(readHash)
+  const [route, query = ''] = hash.split('?')
+  const params = new URLSearchParams(query)
+  const [theme, setThemeState] = useState(getTheme)
 
-      <div className="ticks"></div>
+  const setTheme = useCallback((m) => { applyTheme(m); setThemeState(m) }, [])
+  useEffect(() => { applyTheme(getTheme()) }, [])
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+  useEffect(() => {
+    const on = () => { setHash(readHash()); window.scrollTo(0, 0) }
+    window.addEventListener('hashchange', on)
+    return () => window.removeEventListener('hashchange', on)
+  }, [])
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+  const logout = useCallback(() => { setToken(null); setUser(null); window.location.hash = '' }, [])
+  useEffect(() => { setUnauthorizedHandler(logout) }, [logout])
+
+  // On page reload: check the saved token is still valid and belongs to an admin
+  useEffect(() => {
+    if (!getToken()) return
+    api('/api/auth/me')
+      .then(({ user }) => (user.role === 'admin' ? setUser(user) : logout()))
+      .catch(() => logout())
+      .finally(() => setChecking(false))
+  }, [logout])
+
+  // Live updates while an admin is logged in
+  const loggedIn = Boolean(user)
+  useEffect(() => (loggedIn ? startLive() : undefined), [loggedIn])
+
+  if (checking) return <main className="login"><p className="muted">Loading...</p></main>
+  if (!user) return <Login onLoggedIn={(token, u) => { setToken(token); setUser(u) }} />
+
+  let page
+  if (route === '/') page = <Dashboard />
+  else if (route === '/jobs') page = <Jobs key={params.get('tab') || 'default'} initialTab={params.get('tab')} />
+  else if (route === '/users') page = <Users key={`${params.get('id')}${params.get('group')}${params.get('status')}`} id={params.get('id')} group={params.get('group')} status={params.get('status')} />
+  else if (route === '/requests') page = <Requests key={params.get('id') || 'list'} id={params.get('id')} />
+  else if (route === '/payments') page = <Payments />
+  else if (route === '/complaints') page = <Complaints />
+  else if (route === SETTINGS.path) page = <Settings user={user} theme={theme} onTheme={setTheme} onLogout={logout} />
+  else {
+    const item = NAV.find((n) => n.path === route)
+    page = <Stub title={item ? item.title : 'Not found'} />
+  }
+
+  return <Layout user={user} route={route} theme={theme} onTheme={setTheme}>{page}</Layout>
 }
-
-export default App

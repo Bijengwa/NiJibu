@@ -3,22 +3,22 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import Button from '../components/Button';
 import Field from '../components/Field';
 import FormScreen from '../components/FormScreen';
+import FeeStep from '../components/FeeStep';
 import IdentityQuiz from '../components/IdentityQuiz';
-import { EyeIcon, EyeOffIcon, LockIcon, MailIcon, PhoneIcon, ShieldCheckIcon } from '../components/Icons';
-import { matchNida } from '../api/provider';
+import TermsCheck from '../components/TermsCheck';
+import { EyeIcon, EyeOffIcon, LockIcon, MailIcon, PhoneIcon } from '../components/Icons';
 import { TEST_MODE } from '../config';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { saveDraft } from '../signup/draft';
 import { errorMessage } from '../utils/errors';
-import {
-  formatNida, onlyDigits, onlyNidaDigits, validateConfirm, validateEmail, validateNamePart,
-  validateNida, validatePassword, validatePhone,
-} from '../utils/validation';
+import { onlyDigits, validateConfirm, validateEmail, validateNamePart, validatePassword, validatePhone } from '../utils/validation';
 
-// Sign-up for a fundi (2 steps), before the account exists:
-//   1 names + phone + email + NIDA number + password (NIDA must match the names and the phone)
-//   2 NIDA questions, one at a time (demo: 6 questions, 5 right in a row)
+// Sign-up for a fundi (3 steps), before the account exists:
+//   1 account details: names + phone + email + password
+//   2 the registration fee (every identity check is paid, no refund)
+//   3 NIDA check: the NIDA number + one question, sent to NIDA with the names and phone in ONE hit
+//     (a second hit only to correct mistakes)
 // Then the phone code is asked (VerifyScreen). onCancel goes back to the login.
 export default function WorkerSignupScreen({ onCancel }) {
   const { colors, t } = useSettings();
@@ -26,7 +26,8 @@ export default function WorkerSignupScreen({ onCancel }) {
 
   const [step, setStep] = useState(1);
   const [v, setV] = useState({ firstName: '', middleName: '', lastName: '', phone: '', email: '', password: '', confirm: '' });
-  const [matching, setMatching] = useState(false);
+  const [feeId, setFeeId] = useState(null);
+  const [agreed, setAgreed] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [nida, setNida] = useState('');
   const [errors, setErrors] = useState({}); // values are translation keys
@@ -46,48 +47,41 @@ export default function WorkerSignupScreen({ onCancel }) {
     else setStep(step - 1);
   };
 
-  // Step 1: check the form, then ask NIDA if the number, names and phone belong together
-  const next1 = async () => {
-    if (matching) return;
+  // Step 1: check the form (NIDA is asked only after the fee is paid)
+  const next1 = () => {
     const e = {
       firstName: validateNamePart(v.firstName),
       middleName: validateNamePart(v.middleName, true),
       lastName: validateNamePart(v.lastName),
       phone: validatePhone(v.phone),
       email: validateEmail(v.email),
-      nida: validateNida(nida),
       password: validatePassword(v.password),
       confirm: validateConfirm(v.password, v.confirm),
+      terms: agreed ? '' : 'termsRequired',
     };
     setErrors(e);
     if (Object.values(e).some(Boolean)) return;
-    setMatching(true);
-    try {
-      await matchNida({ nidaNumber: nida, firstName: v.firstName.trim(), middleName: v.middleName.trim(), lastName: v.lastName.trim(), phone: v.phone });
-      setStep(2);
-    } catch (x) {
-      setErrors({ form: x.code || 'UNKNOWN' });
-    } finally {
-      setMatching(false);
-    }
+    setFeeId(null); // a new try is a new payment
+    setStep(2);
   };
 
   // After the questions are passed: create the account (the code is sent to the phone)
-  const finish = async () => {
+  const finish = async (d) => {
     if (loading) return;
     setErrors({});
     setLoading(true);
     try {
       setChecking(true);
+      // d = what passed NIDA (the names and the NIDA number may have been corrected in the check)
       await saveDraft({
         phone: v.phone,
-        firstName: v.firstName.trim(),
-        middleName: v.middleName.trim(),
-        lastName: v.lastName.trim(),
+        firstName: d.firstName,
+        middleName: d.middleName,
+        lastName: d.lastName,
         email: v.email.trim(),
-        nidaNumber: nida,
+        nidaNumber: d.nidaNumber,
       });
-      await register(v.phone, v.password); // App then shows the code screen
+      await register(v.phone, v.password, agreed); // App then shows the code screen
     } catch (e) {
       setErrors({ form: e.code || 'UNKNOWN' });
       setChecking(false);
@@ -108,7 +102,7 @@ export default function WorkerSignupScreen({ onCancel }) {
 
   if (step === 1) {
     return (
-      <FormScreen step={1} steps={2} title={t('signupTitle')} subtitle={t('signupSub')} onBack={back}>
+      <FormScreen step={1} steps={3} title={t('signupTitle')} subtitle={t('signupSub')} onBack={back}>
         <Field label={t('firstName')} value={v.firstName} onChangeText={(x) => set('firstName', x)} autoCapitalize="words"
           returnKeyType="next" onSubmitEditing={() => refs.middle.current?.focus()} error={err('firstName')} />
         <Field label={t('middleName')} inputRef={refs.middle} value={v.middleName} onChangeText={(x) => set('middleName', x)}
@@ -121,15 +115,13 @@ export default function WorkerSignupScreen({ onCancel }) {
         <Field label={t('email')} inputRef={refs.email} icon={<MailIcon size={20} color={colors.textMuted} />} value={v.email}
           onChangeText={(x) => set('email', x)} placeholder="name@example.com" keyboardType="email-address" autoCapitalize="none"
           autoCorrect={false} autoComplete="email" error={err('email')} />
-        <Field label={t('nidaNumber')} icon={<ShieldCheckIcon size={20} color={colors.textMuted} />} value={formatNida(nida)}
-          onChangeText={(x) => { setNida(onlyNidaDigits(x)); setErrors((e) => ({ ...e, nida: '' })); }} placeholder="19900101-12345-12345-12"
-          keyboardType="number-pad" maxLength={23} error={err('nida')} />
         <Field label={t('password')} icon={<LockIcon size={20} color={colors.textMuted} />} right={eye} inputRef={refs.password}
           value={v.password} onChangeText={(x) => set('password', x)} placeholder="••••••" secureTextEntry={!showPassword}
           autoCapitalize="none" autoCorrect={false} autoComplete="new-password" error={err('password')} />
         <Field label={t('confirmPassword')} icon={<LockIcon size={20} color={colors.textMuted} />} inputRef={refs.confirm}
           value={v.confirm} onChangeText={(x) => set('confirm', x)} placeholder="••••••" secureTextEntry={!showPassword}
           autoCapitalize="none" autoCorrect={false} autoComplete="new-password" error={err('confirm')} />
+        <TermsCheck checked={agreed} onChange={(x) => { setAgreed(x); setErrors((s) => ({ ...s, terms: '' })); }} error={errors.terms} />
         {!!errors.form && (
           <Text style={[styles.formError, { color: colors.error }]}>{errorMessage(t, errors.form)}</Text>
         )}
@@ -138,28 +130,43 @@ export default function WorkerSignupScreen({ onCancel }) {
             <Text style={[styles.noteText, { color: colors.textMuted }]}>{t('signupDemo')}</Text>
           </View>
         )}
-        <Button title={matching ? t('nidaChecking') : t('continue')} onPress={next1} loading={matching} style={{ marginTop: 20 }} />
+        <Button title={t('continue')} onPress={next1} style={{ marginTop: 20 }} />
       </FormScreen>
     );
   }
 
   if (step === 2) {
     return (
-      <FormScreen step={2} steps={2} title={t('quizTitle')} subtitle={t('quizSub')}>
-        <IdentityQuiz nidaNumber={nida} onPass={() => { setStep(3); finish(); }} onExit={onCancel} />
+      <FormScreen step={2} steps={3} title={t('feeTitle')} subtitle={t('feeSub')} onBack={back}>
+        <FeeStep phone={v.phone} onPaid={(id) => { setFeeId(id); setStep(3); }} />
       </FormScreen>
     );
   }
 
-  // Step 3: creating the account (no screen to fill; if it fails the fundi can try again)
+  if (step === 3) {
+    // The fee is paid: no back arrow (going back would mean paying again)
+    return (
+      <FormScreen step={3} steps={3} title={t('quizTitle')} subtitle={t('quizSub')}>
+        <IdentityQuiz
+          feeId={feeId}
+          details={{ nidaNumber: nida, firstName: v.firstName.trim(), middleName: v.middleName.trim(), lastName: v.lastName.trim(), phone: v.phone }}
+          onPass={(d) => { setV((x) => ({ ...x, firstName: d.firstName, middleName: d.middleName, lastName: d.lastName })); setNida(d.nidaNumber); setStep(4); finish(d); }}
+          onExit={() => setStep(1)}
+        />
+      </FormScreen>
+    );
+  }
+
+  // Step 4: creating the account (no screen to fill; if it fails the fundi can try again, the check stays valid for 1 hour)
+  const lastD = { nidaNumber: nida, firstName: v.firstName.trim(), middleName: v.middleName.trim(), lastName: v.lastName.trim() };
   return (
-    <FormScreen step={2} steps={2} title={t('signupCreatingTitle')} subtitle={t('signupFingerSub')} onBack={loading ? undefined : () => setStep(1)}>
+    <FormScreen step={3} steps={3} title={t('signupCreatingTitle')} subtitle={t('signupFingerSub')}>
       <View style={styles.center}>
         {checking ? <ActivityIndicator size="large" color={colors.primary} /> : null}
         <Text style={[styles.fingerLabel, { color: colors.text }]}>{checking ? t('nidaChecking') : ''}</Text>
       </View>
       {formError}
-      {!loading && !!errors.form && <Button title={t('tryAgain')} onPress={finish} style={{ marginTop: 20 }} />}
+      {!loading && !!errors.form && <Button title={t('tryAgain')} onPress={() => finish(lastD)} style={{ marginTop: 20 }} />}
     </FormScreen>
   );
 }

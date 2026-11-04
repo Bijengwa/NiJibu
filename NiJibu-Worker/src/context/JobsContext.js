@@ -200,6 +200,14 @@ export function JobsProvider({ children }) {
     [token, loadJobs]
   );
 
+  const report = useCallback(
+    async (requestId, reason, message) => {
+      await jobsApi.reportJob(token, requestId, reason, message);
+      await loadJobs();
+    },
+    [token, loadJobs]
+  );
+
   const accept = useCallback(
     async (offerId) => {
       try {
@@ -242,8 +250,8 @@ export function JobsProvider({ children }) {
   );
 
   const value = useMemo(
-    () => ({ online, position, setOnline, offers, active, jobs, totals, error, refresh, accept, decline, move, confirmReceived, complain }),
-    [online, position, setOnline, offers, active, jobs, totals, error, refresh, accept, decline, move, confirmReceived, complain]
+    () => ({ online, position, setOnline, offers, active, jobs, totals, error, refresh, accept, decline, move, confirmReceived, complain, report }),
+    [online, position, setOnline, offers, active, jobs, totals, error, refresh, accept, decline, move, confirmReceived, complain, report]
   );
 
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;

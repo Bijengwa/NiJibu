@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -5,11 +6,14 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { SettingsProvider, useSettings } from './src/context/SettingsContext';
 import MainTabs from './src/navigation/MainTabs';
 import AuthScreen from './src/screens/AuthScreen';
+import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
+import TermsGateScreen from './src/screens/TermsGateScreen';
 import VerifyScreen from './src/screens/VerifyScreen';
 
 function Root() {
   const { colors, isDark } = useSettings();
   const { user, restoring, pending } = useAuth();
+  const [forgot, setForgot] = useState(false);
 
   let screen;
   if (restoring) {
@@ -18,12 +22,16 @@ function Root() {
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
+  } else if (user && !user.terms_ok) {
+    screen = <TermsGateScreen />;
   } else if (user) {
     screen = <MainTabs />;
   } else if (pending) {
     screen = <VerifyScreen />;
+  } else if (forgot) {
+    screen = <ForgotPasswordScreen onBack={() => setForgot(false)} onDone={() => setForgot(false)} />;
   } else {
-    screen = <AuthScreen />;
+    screen = <AuthScreen onForgot={() => setForgot(true)} />;
   }
 
   return (

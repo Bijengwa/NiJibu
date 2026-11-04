@@ -3,9 +3,8 @@ import { request } from './client';
 // Fundi (provider) API.
 //   GET  /api/provider          -> { provider }   (status, details, nida_submitted, payout_set, is_online)
 //   PUT  /api/provider          body: { services[] (slugs), lat, lng, experience, availability }
-//   POST /api/provider/nida     multipart: nida_number, selfie, id_photo   (private storage, admin only)
 //   PUT  /api/provider/payout   body: { network, number }
-//   POST /api/provider/identity/match | /answer   (sign-up check, before the account exists)
+//   GET|POST /api/provider/identity/fee, POST /check, POST /accept   (registration fee + NIDA check)
 //   POST /api/provider/identity                   (after the phone code: links the checked NIDA to the account)
 //
 // provider.status: 'incomplete' | 'pending' | 'verified' | 'rejected'
@@ -21,26 +20,29 @@ const file = (asset, name) => {
   return { uri: asset.uri, name: `${name}.${type.split('/')[1] || 'jpg'}`, type };
 };
 
-export const submitNida = (token, { nidaNumber, selfie, idPhoto }) => {
-  const form = new FormData();
-  form.append('nida_number', nidaNumber);
-  form.append('selfie', file(selfie, 'selfie'));
-  form.append('id_photo', file(idPhoto, 'id'));
-  return request('/api/provider/nida', { method: 'POST', token, body: form, timeout: 60000 });
-};
+// --- Registration fee + NIDA check (the account may not exist yet, so these calls have no token) ---
+// Every try costs the registration fee (no refund). A try = ONE NIDA hit with everything together,
+// and a second hit only to correct mistakes.
+export const getFee = () => request('/api/provider/identity/fee');
 
-// Do the NIDA number, the names and the phone belong to the same person in NIDA?
-// errors: NIDA_NOT_FOUND, NIDA_NAME_MISMATCH, NIDA_PHONE_MISMATCH, IDENTITY_LOCKED
-export const matchNida = (d) =>
-  request('/api/provider/identity/match', {
+// phone = the account phone, payPhone = the number the worker typed to pay from (no network to choose)
+//   -> { fee: { id, status: 'paid' | 'pending' | 'failed', amount, failure } }
+export const payFee = ({ phone, payPhone }) => request('/api/provider/identity/fee', { method: 'POST', body: { phone, pay_phone: payPhone }, timeout: 45000 });
+
+export const feeStatus = ({ id, phone }) => request(`/api/provider/identity/fee/${id}?phone=${encodeURIComponent(phone)}`);
+
+// ONE NIDA hit. Answer: { result: 'passed' | 'retry' | 'failed' | 'number_differs', wrong?: ['name'|'nida'|'phone'|'answer'], hits_left, nida_number? }
+// errors: FEE_REQUIRED, CHECK_CLOSED, QUESTION_REPEATED, NOT_BUILT
+export const checkIdentity = ({ feeId, phone, nidaNumber, firstName, middleName, lastName, questionId, answer }) =>
+  request('/api/provider/identity/check', {
     method: 'POST',
-    body: { nida_number: d.nidaNumber, first_name: d.firstName, middle_name: d.middleName, last_name: d.lastName, phone: d.phone },
+    body: { fee_id: feeId, phone, nida_number: nidaNumber, first_name: firstName, middle_name: middleName, last_name: lastName, question_id: questionId, answer },
     timeout: 30000,
   });
 
-// One answer. The server counts them: 5 correct in a row passes, 8 questions at most, then locked for 24 hours.
-export const checkAnswer = ({ nidaNumber, questionId, answer }) =>
-  request('/api/provider/identity/answer', { method: 'POST', body: { nida_number: nidaNumber, question_id: questionId, answer } });
+// NIDA's own number differs from the typed one. accept = true: use it (no new NIDA hit).
+export const acceptNida = ({ feeId, phone, accept }) =>
+  request('/api/provider/identity/accept', { method: 'POST', body: { fee_id: feeId, phone, accept } });
 
 // After the phone code: link the checked NIDA number and names to the new account.
 export const submitIdentity = (token, draft) =>

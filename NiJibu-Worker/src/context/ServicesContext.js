@@ -28,7 +28,8 @@ export function ServicesProvider({ children }) {
   }, [load]);
 
   const value = useMemo(() => {
-    const services = rows.map((r) => toService(r, lang));
+    // Jobs a worker wrote that the admin has not approved yet (status 'pending') are not in the fixed list
+    const services = rows.filter((r) => r.status !== 'pending').map((r) => toService(r, lang));
     return { services, error, reload: load, getService: (key) => services.find((s) => s.key === key) };
   }, [rows, lang, error, load]);
 

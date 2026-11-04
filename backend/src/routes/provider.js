@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { outcomeOf } = require('../lib/outcome');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requireProvider } = require('../middleware/provider');
@@ -141,6 +142,23 @@ router.post('/payments/:requestId/complaint', async (req, res, next) => {
   }
 });
 
+// Report a problem about a job (customer did not come, refused to pay, ...)
+router.post('/jobs/:requestId/complaint', async (req, res, next) => {
+  try {
+    const row = await require('../services/complaints').file(req.user, 'worker', Number(req.params.requestId), req.body || {});
+    res.status(201).json({ complaint: row });
+  } catch (err) {
+    next(err);
+  }
+});
+router.get('/complaints', async (req, res, next) => {
+  try {
+    res.json({ items: await require('../services/complaints').listMine(req.user.id, 'worker'), reasons: require('../services/complaints').REASONS.worker });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // My current or last jobs
 router.get('/jobs', async (req, res, next) => {
   try {
@@ -153,8 +171,13 @@ router.get('/jobs', async (req, res, next) => {
       .orderBy('r.created_at', 'desc')
       .limit(30)
       .select(
-        'r.id', 'r.status', 'r.address', 'r.created_at', 'r.completed_at', 'r.agreed_price as price',
+        'r.id', 'r.code', 'r.status', 'r.address', 'r.created_at', 'r.completed_at', 'r.agreed_price as price', 'r.payout_due', 'r.cancelled_by', 'r.cancel_reason',
         'pay.status as payment_status', 'pay.fee', 'pay.payout', 'po.status as payout_status', 'po.received_at', 'po.network as payout_network', 'po.complaint_status', 'po.complaint_note', 'r.customer_confirmed_at',
+        db.raw("(coalesce(r.completed_at, r.cancelled_at, r.accepted_at, r.created_at) > now() - interval '7 days') as can_complain"),
+        db.raw("(select c.status from complaints c where c.request_id = r.id and c.from_user_id = ? order by c.id desc limit 1) as report_status", [req.user.id]),
+        db.raw("(select c.reason from complaints c where c.request_id = r.id and c.from_user_id = ? order by c.id desc limit 1) as report_reason", [req.user.id]),
+        db.raw("(select c.message from complaints c where c.request_id = r.id and c.from_user_id = ? order by c.id desc limit 1) as report_message", [req.user.id]),
+        db.raw("(select c.admin_reply from complaints c where c.request_id = r.id and c.from_user_id = ? order by c.id desc limit 1) as report_reply", [req.user.id]),
         'cu.name as customer_name', 's.slug', 's.name_sw', 's.name_en'
       );
     // Money summary over all jobs (not only the 30 shown)
@@ -176,7 +199,7 @@ router.get('/jobs', async (req, res, next) => {
       .sum({ n: 'r.agreed_price' })
       .first();
     res.json({
-      items,
+      items: items.map((j) => ({ ...j, ...outcomeOf(j) })),
       totals: { received: sum.received, on_the_way: sum.on_the_way, waiting_customer: Number(unpaid.n || 0) },
     });
   } catch (err) {

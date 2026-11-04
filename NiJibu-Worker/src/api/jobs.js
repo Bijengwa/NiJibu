@@ -25,6 +25,8 @@ export const listOffers = (token) => request('/api/provider/offers', { token });
 export const listJobs = (token) => request('/api/provider/jobs', { token });
 export const confirmReceived = (token, requestId) => request(`/api/provider/payments/${requestId}/received`, { method: 'POST', token });
 export const fileComplaint = (token, requestId, note) => request(`/api/provider/payments/${requestId}/complaint`, { method: 'POST', token, body: { note } });
+// Report a problem about a job (customer did not come, refused to pay, ...)
+export const reportJob = (token, requestId, reason, message) => request(`/api/provider/jobs/${requestId}/complaint`, { method: 'POST', token, body: { reason, message } });
 export const getRequest = (token, id) => request(`/api/requests/${id}`, { token });
 
 export const acceptOffer = (token, offerId) => request(`/api/offers/${offerId}/accept`, { method: 'POST', token });

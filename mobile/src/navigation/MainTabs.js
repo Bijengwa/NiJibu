@@ -13,6 +13,7 @@ import HomeScreen from '../screens/HomeScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import TermsViewScreen from '../screens/TermsViewScreen';
 
 // Tiny navigator: 4 tabs (home, activity, notifications, account) + a stack of inner screens.
 // (Can be replaced by Expo Router later without touching the screens' content.)
@@ -21,6 +22,7 @@ const INNER = {
   settings: SettingsScreen,
   changePassword: ChangePasswordScreen,
   deleteAccount: DeleteAccountScreen,
+  terms: TermsViewScreen,
 };
 
 // Services and the open request are shared by the Home and Activity tabs.

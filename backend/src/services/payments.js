@@ -1,14 +1,15 @@
-// Customer pays for a finished job. NiJibu keeps COMMISSION_PERCENT (default 10) and pays the rest to the fundi.
+// Customer pays for a finished job. NiJibu keeps COMMISSION_PERCENT (default 13) and pays the rest to the fundi.
 const db = require('../db');
 const { HttpError } = require('../lib/httpError');
 const { notify } = require('./notify');
 const dispatch = require('./dispatch');
 const provider = require('./paymentProvider');
 
-const COMMISSION_PERCENT = Number(process.env.COMMISSION_PERCENT ?? 10);
+const COMMISSION_PERCENT = Number(process.env.COMMISSION_PERCENT ?? 13);
 const NETWORKS = ['mpesa', 'mixx', 'airtel', 'halopesa'];
-const MIN_PRICE = 1000;
+const MIN_PRICE = Number(process.env.MIN_PRICE ?? 10000); // jobs under TZS 10,000 are not accepted
 const MAX_PRICE = 5000000;
+const PENDING_MS = 10 * 60 * 1000; // a payment the customer never approved on the phone is closed after 10 minutes
 
 // The split, in whole shillings (the fee is rounded, the fundi gets the rest, so the two always add up)
 function split(amount, percent = COMMISSION_PERCENT) {
@@ -32,6 +33,12 @@ async function sendPayout(paymentId) {
   }
   if (row.status === 'sent') return row;
 
+  // The customer has a complaint in progress for this job: the money waits until the admin answers
+  if (await require('./complaints').holdsPayout(payment.request_id)) {
+    await db('payouts').where({ id: row.id }).update({ status: 'pending', failure: 'ON_HOLD' });
+    return { ...row, status: 'pending', failure: 'ON_HOLD' };
+  }
+
   // No payout number saved yet: the money waits (pending) until the fundi adds it
   const number = p?.payout_number;
   const network = p?.payout_network;
@@ -48,7 +55,7 @@ async function sendPayout(paymentId) {
   }
   if (result.ok) {
     await db('payouts').where({ id: row.id }).update({ status: 'sent', reference: result.reference, network, number, failure: null, sent_at: db.fn.now() });
-    await notify(p.user_id, 'payment_received', 'You were paid', `TZS ${row.amount} was sent to your ${network} number.`);
+    await notify(p.user_id, 'payment_received', 'You were paid', `TZS ${row.amount} was sent to your ${network} number.`, { amount: row.amount });
   } else {
     await db('payouts').where({ id: row.id }).update({ status: 'failed', failure: String(result.failure || 'ERROR').slice(0, 100) });
   }
@@ -70,51 +77,132 @@ async function payRequest(user, requestId, { network, phone }) {
   const existing = await db('payments').where({ request_id: r.id }).first();
   if (existing?.status === 'paid') throw new HttpError(409, 'ALREADY_PAID', 'Already paid');
 
-  const money = split(r.agreed_price);
-  // One row per request. A failed one is tried again with the same row; the guard below stops two taps paying twice.
+  // Use the numbers saved when the fundi set the price (the commission at that time)
+  const money = split(r.agreed_price, r.fee_percent ?? COMMISSION_PERCENT);
+  // One payments row per request (the money record). Every try is also kept in payment_attempts.
+  // A failed one is tried again with the same row; the guard below stops two taps paying twice.
   let payment = existing;
   if (!payment) {
     try {
       [payment] = await db('payments')
-        .insert({ request_id: r.id, customer_id: user.id, provider_id: r.provider_id, amount: r.agreed_price, ...money, status: 'pending', network, phone: msisdn })
+        .insert({ request_id: r.id, service_id: r.service_id, customer_id: user.id, provider_id: r.provider_id, amount: r.agreed_price, ...money, status: 'pending', pending_at: db.fn.now(), network, phone: msisdn })
         .returning('*');
     } catch (err) {
       if (err.code === '23505') throw new HttpError(409, 'PAYMENT_BUSY', 'Payment is in progress');
       throw err;
     }
   } else {
-    const claimed = await db('payments').where({ id: payment.id, status: 'failed' }).update({ status: 'pending', network, phone: msisdn, failure: null, ...money, amount: r.agreed_price });
+    const claimed = await db('payments').where({ id: payment.id, status: 'failed' }).update({ status: 'pending', pending_at: db.fn.now(), reference: null, network, phone: msisdn, failure: null, ...money, amount: r.agreed_price, attempts: db.raw('attempts + 1') });
     if (!claimed) throw new HttpError(409, 'PAYMENT_BUSY', 'Payment is in progress');
+    payment = await db('payments').where({ id: payment.id }).first();
   }
+
+  const attempt = (status, extra) =>
+    db('payment_attempts').insert({ payment_id: payment.id, request_id: r.id, customer_id: user.id, amount: r.agreed_price, network, phone: msisdn, status, ...extra });
 
   let result;
   try {
-    result = await provider.collect({ amount: r.agreed_price, phone: msisdn, network });
+    // orderId: unique for every try, so a retry never reuses an old order at the provider
+    result = await provider.collect({ amount: r.agreed_price, phone: msisdn, network, orderId: `NJP${payment.id}A${payment.attempts}`, buyer: { name: user.name, email: user.email } });
   } catch (e) {
     await db('payments').where({ id: payment.id }).update({ status: 'failed', failure: e.code || 'ERROR' });
+    await attempt('failed', { failure: e.code || 'ERROR' });
     throw e;
   }
   if (!result.ok) {
-    await db('payments').where({ id: payment.id }).update({ status: 'failed', failure: String(result.failure || 'DECLINED').slice(0, 100) });
+    const failure = String(result.failure || 'DECLINED').slice(0, 100);
+    await db('payments').where({ id: payment.id }).update({ status: 'failed', failure });
+    await attempt('failed', { failure });
     throw new HttpError(402, 'PAYMENT_FAILED', 'The payment was not completed');
   }
 
+  if (result.pending) {
+    // Mobile money: the customer approves on the phone. The result comes later (webhook / status check) -> settle()
+    await db('payments').where({ id: payment.id }).update({ reference: result.reference });
+    await attempt('pending', { reference: result.reference });
+    await dispatch.publishStatus(r.id);
+    return db('payments').where({ id: payment.id }).first();
+  }
+
   await db('payments').where({ id: payment.id }).update({ status: 'paid', reference: result.reference, paid_at: db.fn.now(), failure: null });
-  await notify(user.id, 'payment_done', 'Payment received', `Thank you. TZS ${r.agreed_price} was paid.`);
+  await attempt('success', { reference: result.reference });
+  await notify(user.id, 'payment_done', 'Payment received', `Thank you. TZS ${r.agreed_price} was paid.`, { amount: r.agreed_price });
 
   await sendPayout(payment.id); // the fundi's share goes out right away (never throws)
   await dispatch.publishStatus(r.id); // both apps refresh
   return db('payments').where({ id: payment.id }).first();
 }
 
+// Close a payment that was waiting for the customer: from the provider's webhook, the status check, or the timeout.
+// Safe to call twice (only a payment still "pending" is changed). outcome = { state: 'paid' | 'failed', failure? }
+async function settle(orderId, outcome) {
+  const payment = await db('payments').where({ reference: orderId, status: 'pending' }).first();
+  if (!payment) return null; // unknown, or already closed
+  if (outcome.state === 'paid') {
+    const n = await db('payments').where({ id: payment.id, status: 'pending' }).update({ status: 'paid', paid_at: db.fn.now(), failure: null });
+    if (!n) return null;
+    await db('payment_attempts').where({ payment_id: payment.id, reference: orderId, status: 'pending' }).update({ status: 'success' });
+    await notify(payment.customer_id, 'payment_done', 'Payment received', `Thank you. TZS ${payment.amount} was paid.`, { amount: payment.amount });
+    await sendPayout(payment.id); // the fundi's share goes out (never throws)
+  } else if (outcome.state === 'failed') {
+    const failure = String(outcome.failure || 'DECLINED').slice(0, 100);
+    const n = await db('payments').where({ id: payment.id, status: 'pending' }).update({ status: 'failed', failure });
+    if (!n) return null;
+    await db('payment_attempts').where({ payment_id: payment.id, reference: orderId, status: 'pending' }).update({ status: 'failed', failure });
+  } else {
+    return null;
+  }
+  await dispatch.publishStatus(payment.request_id); // both apps refresh
+  return db('payments').where({ id: payment.id }).first();
+}
+
+// The provider told us something about this order (webhook). We never trust the message itself:
+// we ask the provider for the real status, then settle.
+async function onProviderNotice(orderId) {
+  const s = await provider.status({ orderId });
+  if (String(orderId).startsWith('NJV')) { // a worker's registration fee, not a job payment
+    if (s.state !== 'pending') await require('./verificationFee').settle(orderId, s);
+    return null;
+  }
+  if (s.state === 'pending') return null;
+  const done = await settle(orderId, s);
+  if (!done && s.state === 'paid') {
+    const known = await db('payment_attempts').where({ reference: orderId }).first('id', 'payment_id', 'status');
+    if (known && known.status === 'failed') console.error(`[payments] MONEY RECEIVED for a payment we closed as failed (order ${orderId}, payment ${known.payment_id}). Check it by hand.`);
+  }
+  return done;
+}
+
+// Runs every few seconds on the server: asks the provider about waiting payments and closes the old ones.
+async function reconcilePending() {
+  const rows = await db('payments').where({ status: 'pending' }).select('id', 'reference', 'pending_at');
+  for (const p of rows) {
+    try {
+      if (p.reference) {
+        const s = await provider.status({ orderId: p.reference });
+        if (s.state !== 'pending') {
+          await settle(p.reference, s);
+          continue;
+        }
+      }
+      if (Date.now() - new Date(p.pending_at).getTime() > PENDING_MS) {
+        if (p.reference) await settle(p.reference, { state: 'failed', failure: 'TIMEOUT' });
+        else await db('payments').where({ id: p.id, status: 'pending' }).update({ status: 'failed', failure: 'TIMEOUT' });
+      }
+    } catch (e) {
+      console.warn(`[payments] check of payment ${p.id} failed:`, e.message);
+    }
+  }
+}
+
 // What each side may see about the payment of a request
 async function paymentView(requestId, role) {
   const p = await db('payments').where({ request_id: requestId }).first();
   if (!p) return null;
-  if (role === 'customer') return { status: p.status, amount: p.amount, paid_at: p.paid_at };
+  if (role === 'customer') return { code: p.code, status: p.status, amount: p.amount, paid_at: p.paid_at };
   const out = await db('payouts').where({ payment_id: p.id }).first();
   return {
-    status: p.status, amount: p.amount, fee: p.fee, fee_percent: p.fee_percent, payout: p.payout, paid_at: p.paid_at,
+    code: p.code, status: p.status, amount: p.amount, fee: p.fee, fee_percent: p.fee_percent, payout: p.payout, paid_at: p.paid_at,
     payout_status: out?.status || null,
     received_at: out?.received_at || null,
     complaint_status: out?.complaint_status || null,
@@ -147,23 +235,16 @@ async function fileComplaint(user, requestId, note) {
   if (!row) throw new HttpError(404, 'NOT_FOUND', 'Payment not found');
   if (row.received_at) throw new HttpError(409, 'BAD_STATE', 'You already confirmed this payment');
   if (row.complaint_status === 'open') throw new HttpError(409, 'COMPLAINT_OPEN', 'You already have an open complaint');
+  const info = await db('payments').where({ request_id: requestId }).first('customer_id');
+  try {
+    await db('complaints').insert({ request_id: requestId, from_user_id: user.id, from_role: 'worker', against_user_id: info?.customer_id || null, reason: 'payment_not_received', message: text, payout_id: row.id });
+  } catch (err) {
+    if (err.code === '23505') throw new HttpError(409, 'COMPLAINT_OPEN', 'You already have an open complaint');
+    throw err;
+  }
   await db('payouts').where({ id: row.id }).update({ complaint: text, complaint_at: db.fn.now(), complaint_status: 'open', complaint_note: null, resolved_at: null });
   const admins = await db('users').where({ role: 'admin' }).pluck('id');
   for (const id of admins) await notify(id, 'payout_complaint', 'Payout complaint', `A fundi reported a problem with a payout (request ${requestId}).`);
 }
 
-// Admin answers a complaint. `resend` = try the payout again.
-async function resolveComplaint(payoutId, note, resend) {
-  const po = await db('payouts').where({ id: payoutId, complaint_status: 'open' }).first();
-  if (!po) throw new HttpError(404, 'NOT_FOUND', 'No open complaint');
-  if (resend) {
-    await db('payouts').where({ id: po.id }).update({ status: 'failed' }); // let sendPayout send it again
-    await sendPayout(po.payment_id);
-  }
-  const text = typeof note === 'string' ? note.trim().slice(0, 300) : '';
-  await db('payouts').where({ id: po.id }).update({ complaint_status: 'resolved', complaint_note: text || null, resolved_at: db.fn.now(), received_at: null });
-  const p = await db('provider_profiles').where({ id: po.provider_id }).first('user_id');
-  if (p) await notify(p.user_id, 'complaint_resolved', 'Your complaint was answered', text || 'The admin looked at your complaint.');
-}
-
-module.exports = { confirmReceived, fileComplaint, resolveComplaint, payRequest, sendPayout, paymentView, split, validPrice, COMMISSION_PERCENT, NETWORKS, MIN_PRICE, MAX_PRICE };
+module.exports = { confirmReceived, fileComplaint, payRequest, sendPayout, paymentView, settle, onProviderNotice, reconcilePending, PENDING_MS, split, validPrice, COMMISSION_PERCENT, NETWORKS, MIN_PRICE, MAX_PRICE };

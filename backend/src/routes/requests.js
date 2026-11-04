@@ -6,6 +6,7 @@ const rateLimit = require('../middleware/rateLimit');
 const { validLat, validLng } = require('../lib/geo');
 const svc = require('../services/requests');
 const payments = require('../services/payments');
+const { outcomeOf } = require('../lib/outcome');
 
 router.use(requireAuth);
 
@@ -43,8 +44,14 @@ router.get('/', async (req, res, next) => {
       .where('r.customer_id', req.user.id)
       .orderBy('r.created_at', 'desc')
       .limit(30)
-      .select('r.id', 'r.status', 'r.address', 'r.created_at', 'r.agreed_price as price', 'r.customer_confirmed_at', 'pay.status as payment_status', 's.slug', 's.name_sw', 's.name_en');
-    res.json({ items });
+      .select('r.id', 'r.code', 'r.status', 'r.cancelled_by', 'r.cancel_reason', 'r.address', 'r.created_at', 'r.agreed_price as price', 'r.customer_confirmed_at', 'pay.status as payment_status', 's.slug', 's.name_sw', 's.name_en',
+        // can the customer still report a problem? (a worker was assigned, inside the 7 day window)
+        db.raw("(r.provider_id is not null and coalesce(r.completed_at, r.cancelled_at, r.accepted_at, r.created_at) > now() - interval '7 days') as can_complain"),
+        db.raw("(select c.status from complaints c where c.request_id = r.id and c.from_user_id = r.customer_id order by c.id desc limit 1) as complaint_status"),
+        db.raw("(select c.reason from complaints c where c.request_id = r.id and c.from_user_id = r.customer_id order by c.id desc limit 1) as complaint_reason"),
+        db.raw("(select c.message from complaints c where c.request_id = r.id and c.from_user_id = r.customer_id order by c.id desc limit 1) as complaint_message"),
+        db.raw("(select c.admin_reply from complaints c where c.request_id = r.id and c.from_user_id = r.customer_id order by c.id desc limit 1) as complaint_reply"));
+    res.json({ items: items.map((r) => ({ ...r, ...outcomeOf(r) })) });
   } catch (err) {
     next(err);
   }
@@ -59,6 +66,27 @@ router.get('/open', async (req, res, next) => {
         .whereIn('status', ['searching', 'accepted', 'on_the_way', 'arrived', 'in_progress'])
         .first('id')) || (await svc.unpaidJobOf(req.user.id)); // a finished job still waiting for payment stays open
     res.json({ request: r ? await svc.loadView(req.user, r.id) : null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Complaints of this customer (before /:id so "complaints" is not read as an id)
+router.get('/complaints/mine', async (req, res, next) => {
+  try {
+    const c = require('../services/complaints');
+    res.json({ items: await c.listMine(req.user.id, 'customer'), reasons: c.REASONS.customer, window_days: c.WINDOW_DAYS });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/complaint', async (req, res, next) => {
+  try {
+    const id = idOf(req);
+    if (!id) return bad(res);
+    const row = await require('../services/complaints').file(req.user, 'customer', id, req.body || {});
+    res.status(201).json({ complaint: row });
   } catch (err) {
     next(err);
   }

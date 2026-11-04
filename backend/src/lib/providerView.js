@@ -13,13 +13,14 @@ async function providerView(userId) {
   const details = await db('provider_services as ps')
     .join('services as s', 's.id', 'ps.service_id')
     .where('ps.provider_id', p.id)
+    .where('s.status', 'approved') // jobs the worker wrote and the admin has not approved yet are in other_jobs
     .select('s.slug as key', 'ps.experience', 'ps.availability');
   const services = details.map((d) => d.key);
   const other_jobs = await db('service_suggestions')
     .where({ provider_id: p.id })
     .whereIn('status', ['pending', 'rejected'])
     .orderBy('id')
-    .select('name', 'experience', 'availability', 'status');
+    .select('name', 'name_sw', 'name_en', 'experience', 'availability', 'status');
   return {
     status: p.nida_submitted ? p.verification_status : 'incomplete',
     rejection_reason: p.rejection_reason,

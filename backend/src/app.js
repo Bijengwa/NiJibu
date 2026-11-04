@@ -12,6 +12,16 @@ app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : false }));
 app.use(express.json({ limit: '10kb' }));
 
+// Any successful change (from the apps or the admin) tells the open admin portals to reload their data
+app.use('/api', (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'OPTIONS') {
+    res.on('finish', () => {
+      if (res.statusCode < 400) require('./lib/adminEvents').notify();
+    });
+  }
+  next();
+});
+
 app.get('/health', async (req, res) => {
   try {
     await db.raw('select 1');
@@ -35,6 +45,7 @@ app.use('/api/provider', require('./routes/providerProfile'));
 app.use('/api/provider', require('./routes/provider'));
 app.use('/api/places', require('./routes/places'));
 app.use('/api/requests', require('./routes/requests'));
+app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/offers', require('./routes/offers'));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));

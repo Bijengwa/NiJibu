@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ConfirmModal from '../components/ConfirmModal';
-import { EditIcon, LogOutIcon, MailIcon, PhoneIcon, ShieldCheckIcon, UserIcon, WalletIcon } from '../components/Icons';
+import { EditIcon, LockIcon, LogOutIcon, MailIcon, PhoneIcon, ShieldCheckIcon, UserIcon, WalletIcon } from '../components/Icons';
 import Row from '../components/Row';
 import ServiceIcon from '../components/ServiceIcon';
 import SettingsBar from '../components/SettingsBar';
@@ -11,15 +11,18 @@ import { useProvider } from '../context/ProviderContext';
 import { useServices } from '../context/ServicesContext';
 import { useSettings } from '../context/SettingsContext';
 import { AVAILABILITY, EXPERIENCE } from '../data/options';
+import ChangePasswordScreen from './ChangePasswordScreen';
+import TermsViewScreen from './TermsViewScreen';
 
 // Profile of the verified fundi, payout and log out
 export default function AccountScreen({ onPayout, onEditDetails }) {
-  const { colors, t } = useSettings();
+  const { colors, t, lang } = useSettings();
   const { user, logout } = useAuth();
   const { provider } = useProvider();
   const { services: allServices } = useServices();
   const insets = useSafeAreaInsets();
   const [askLogout, setAskLogout] = useState(false);
+  const [sub, setSub] = useState(null); // 'password' | 'terms' | null
 
   const name = provider.full_name || `+${user.phone}`;
 
@@ -37,8 +40,11 @@ export default function AccountScreen({ onPayout, onEditDetails }) {
     }),
     ...(provider.other_jobs || [])
       .filter((o) => o.status === 'pending')
-      .map((o) => ({ id: `x:${o.name}`, slug: null, name: o.name, line: detailLine(o), waiting: true })),
+      .map((o) => ({ id: `x:${o.name_en || o.name}`, slug: null, name: (lang === 'sw' ? o.name_sw : o.name_en) || o.name, line: detailLine(o), waiting: true })),
   ];
+
+  if (sub === 'password') return <ChangePasswordScreen onBack={() => setSub(null)} />;
+  if (sub === 'terms') return <TermsViewScreen onBack={() => setSub(null)} />;
 
   return (
     <ScrollView
@@ -107,6 +113,8 @@ export default function AccountScreen({ onPayout, onEditDetails }) {
           chevron
           onPress={onPayout}
         />
+        <Row icon={(c) => <LockIcon size={22} color={c} />} label={t('changePassword')} chevron onPress={() => setSub('password')} />
+        <Row icon={(c) => <ShieldCheckIcon size={22} color={c} />} label={t('termsLink')} chevron onPress={() => setSub('terms')} />
         <Row icon={(c) => <LogOutIcon size={22} color={c} />} label={t('logout')} danger last onPress={() => setAskLogout(true)} />
       </View>
 

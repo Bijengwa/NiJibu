@@ -80,12 +80,11 @@ export function ProviderProvider({ children }) {
         setProvider(r.provider);
         return r.provider;
       },
-      submitNida: run(providerApi.submitNida),
       // Questions passed: link the NIDA number to this account (names come from the saved profile)
-      verifyNidaQuestions: async ({ nidaNumber }) => {
-        const [firstName, ...rest] = String(provider?.full_name || '').trim().split(/\s+/);
-        const lastName = rest.pop() || firstName;
-        const r = await providerApi.submitIdentity(token, { firstName, middleName: rest.join(' '), lastName, email: '', nidaNumber });
+      verifyNidaQuestions: async ({ nidaNumber, firstName: f, middleName: m, lastName: l }) => {
+        const [first, ...rest] = String(provider?.full_name || '').trim().split(/\s+/);
+        const last = rest.pop() || first;
+        const r = await providerApi.submitIdentity(token, { firstName: f || first, middleName: f ? m || '' : rest.join(' '), lastName: l || last, email: '', nidaNumber });
         setProvider(r.provider);
         return r.provider;
       },

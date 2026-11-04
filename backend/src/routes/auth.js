@@ -7,6 +7,7 @@ const { issueCode, checkCode } = require('../services/otp');
 const { publicUser } = require('../lib/user');
 const { signToken } = require('../lib/token');
 const { notify } = require('../services/notify');
+const terms = require('../lib/terms');
 
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 72; // bcrypt only uses the first 72 bytes
@@ -47,6 +48,10 @@ router.post('/register', perPhone, async (req, res, next) => {
       return fail(res, 400, 'VALIDATION', `Password must be ${MIN_PASSWORD}-${MAX_PASSWORD} characters`);
     }
 
+    // The person must agree to the Terms and Conditions (the app shows a checkbox and the text)
+    if (req.body?.accept_terms !== true) return fail(res, 400, 'TERMS_REQUIRED', 'Agree to the terms to continue');
+    const agreed = { terms_version: terms.VERSION, terms_accepted_at: db.fn.now() };
+
     const password_hash = await bcrypt.hash(password, 10);
     let user = await db('users').where({ phone }).first();
 
@@ -55,9 +60,9 @@ router.post('/register', perPhone, async (req, res, next) => {
     if (user) {
       // Number registered earlier but never verified: allow a fresh start.
       // Safe, because only whoever receives the code can verify it.
-      await db('users').where({ id: user.id }).update({ password_hash });
+      await db('users').where({ id: user.id }).update({ password_hash, ...agreed });
     } else {
-      [user] = await db('users').insert({ phone, password_hash }).returning('*');
+      [user] = await db('users').insert({ phone, password_hash, ...agreed }).returning('*');
     }
 
     const { retryAfter } = await issueCode(user);
@@ -76,7 +81,7 @@ router.post('/verify', perPhone, async (req, res, next) => {
     if (!phone || !/^\d{6}$/.test(code)) return fail(res, 400, 'VALIDATION', 'Invalid phone or code');
 
     const user = await db('users').where({ phone }).first();
-    if (!user) return fail(res, 400, 'CODE_INVALID', 'Invalid code'); // same answer as a wrong code
+    if (!user || user.phone_verified_at) return fail(res, 400, 'CODE_INVALID', 'Invalid code'); // same answer as a wrong code (a verified account logs in with its password)
 
     const result = await checkCode(user, code);
     if (!result.ok) {
@@ -116,6 +121,51 @@ router.post('/resend', perPhone, async (req, res, next) => {
   }
 });
 
+// The Terms and Conditions text (both languages) and its version. Public.
+router.get('/terms', (req, res) => res.json({ version: terms.VERSION, ...terms.TERMS }));
+
+// Forgot password, step 1: send a code by SMS. Always answers the same, whether the phone exists or not.
+router.post('/forgot', perPhone, async (req, res, next) => {
+  try {
+    const phone = normalizePhone(req.body?.phone);
+    if (!phone) return fail(res, 400, 'VALIDATION', 'Phone must be 9 digits');
+    const user = await db('users').where({ phone }).first();
+    if (user?.phone_verified_at) {
+      const r = await issueCode(user, 'password_resets'); // respects the 60 second wait
+      return res.json({ ok: true, retry_after: r.retryAfter });
+    }
+    res.json({ ok: true, retry_after: 60 });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Forgot password, step 2: the code + a new password. All devices are logged out; the person logs in again.
+router.post('/reset', perPhone, async (req, res, next) => {
+  try {
+    const phone = normalizePhone(req.body?.phone);
+    const code = String(req.body?.code ?? '');
+    const { password } = req.body || {};
+    if (!phone || !/^\d{6}$/.test(code)) return fail(res, 400, 'VALIDATION', 'Invalid phone or code');
+    if (!validPassword(password)) return fail(res, 400, 'VALIDATION', `Password must be ${MIN_PASSWORD}-${MAX_PASSWORD} characters`);
+
+    const user = await db('users').where({ phone }).first();
+    if (!user || !user.phone_verified_at) return fail(res, 400, 'CODE_INVALID', 'Invalid code');
+    const result = await checkCode(user, code, 'password_resets');
+    if (!result.ok) return fail(res, result.error === 'CODE_ATTEMPTS' ? 429 : 400, result.error, 'Code not accepted');
+
+    await db('users').where({ id: user.id }).update({
+      password_hash: await bcrypt.hash(password, 10),
+      token_version: db.raw('token_version + 1'), // logs out every device
+      updated_at: db.fn.now(),
+    });
+    await notify(user.id, 'password_changed', 'Password changed', 'Your password was changed. If this was not you, reset it now.');
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/login', perPhone, async (req, res, next) => {
   try {
     const phone = normalizePhone(req.body?.phone);
@@ -135,6 +185,26 @@ router.post('/login', perPhone, async (req, res, next) => {
       return fail(res, 403, 'PHONE_NOT_VERIFIED', 'Verify your phone', { retry_after: r.retryAfter });
     }
 
+    res.json({ token: signToken(user), user: publicUser(user) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Admin web login: same phone + password, but only accounts with role 'admin'.
+// Anyone else gets the same error as a wrong password (no hint that the account exists).
+router.post('/admin-login', perPhone, async (req, res, next) => {
+  try {
+    const phone = normalizePhone(req.body?.phone);
+    const { password } = req.body || {};
+    if (!phone || typeof password !== 'string') {
+      return fail(res, 400, 'VALIDATION', 'Phone and password are required');
+    }
+    const user = await db('users').where({ phone }).first();
+    const ok = await bcrypt.compare(password, user?.password_hash || DUMMY_HASH);
+    if (!user || !user.password_hash || !ok || user.role !== 'admin' || !user.phone_verified_at) {
+      return fail(res, 401, 'INVALID_CREDENTIALS', 'Wrong phone or password');
+    }
     res.json({ token: signToken(user), user: publicUser(user) });
   } catch (err) {
     next(err);

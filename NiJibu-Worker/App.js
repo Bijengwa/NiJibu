@@ -11,6 +11,8 @@ import { ServicesProvider } from './src/context/ServicesContext';
 import { SettingsProvider, useSettings } from './src/context/SettingsContext';
 import AuthScreen from './src/screens/AuthScreen';
 import DetailsScreen from './src/screens/DetailsScreen';
+import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
+import TermsGateScreen from './src/screens/TermsGateScreen';
 import NidaScreen from './src/screens/NidaScreen';
 import PayoutScreen from './src/screens/PayoutScreen';
 import StatusScreen from './src/screens/StatusScreen';
@@ -111,13 +113,16 @@ function Root() {
   const { isDark } = useSettings();
   const { user, restoring, pending } = useAuth();
   const [signup, setSignup] = useState(false);
+  const [forgot, setForgot] = useState(false);
 
   let screen;
   if (restoring) screen = <Loading />;
+  else if (user && !user.terms_ok) screen = <TermsGateScreen />;
   else if (user) screen = <ProviderFlow />;
   else if (pending) screen = <VerifyScreen />;
   else if (signup) screen = <WorkerSignupScreen onCancel={() => setSignup(false)} />;
-  else screen = <AuthScreen onSignup={() => setSignup(true)} />;
+  else if (forgot) screen = <ForgotPasswordScreen onBack={() => setForgot(false)} onDone={() => setForgot(false)} />;
+  else screen = <AuthScreen onSignup={() => setSignup(true)} onForgot={() => setForgot(true)} />;
 
   return (
     <>

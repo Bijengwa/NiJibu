@@ -1,17 +1,16 @@
-// The fundi's own profile for the Worker app: details, NIDA documents, payout.
+// The fundi's own profile for the Worker app: details, payout.
 const router = require('express').Router();
 const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
-const multer = require('multer');
-const sharp = require('sharp');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { validLat, validLng } = require('../lib/geo');
 const { providerView } = require('../lib/providerView');
 const secret = require('../lib/secret');
+const { normalizeQuery } = require('../lib/text');
+const { findOrCreateJob } = require('../lib/jobs');
 
-const NIDA_DIR = path.join(__dirname, '../../private/nida'); // never served as static files
+// Old NIDA photos (from before photos were removed) stay here; only the admin can open them
+const NIDA_DIR = path.join(__dirname, '../../private/nida');
 const MAX_SERVICES = 5;
 const NETWORKS = ['mpesa', 'mixx', 'airtel', 'halopesa'];
 const EXPERIENCE = ['lt1', '1-3', '3-5', '5-10', '10+'];
@@ -19,12 +18,6 @@ const AVAILABILITY = ['weekdays', 'weekends', 'always'];
 
 const bad = (res, msg = 'Bad request') => res.status(400).json({ error: msg, code: 'VALIDATION' });
 const str = (v, max) => (typeof v === 'string' && v.trim() && v.length <= max ? v.trim() : null);
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 6 * 1024 * 1024, files: 2 },
-  fileFilter: (req, file, cb) => cb(null, /^image\/(jpeg|png|webp|heic)$/.test(file.mimetype)),
-});
 
 router.use(requireAuth);
 
@@ -57,16 +50,22 @@ router.put('/', async (req, res, next) => {
     const others = [];
     const seenNames = new Set();
     for (const i of typed) {
-      const name = str(i.name, 80)?.replace(/\s+/g, ' ');
-      if (!name || seenNames.has(name.toLowerCase())) continue;
-      seenNames.add(name.toLowerCase());
-      others.push({ name, ...withDefaults(i) });
+      // The worker writes the job in Swahili and in English. If only one is given, it is used for both.
+      const sw = str(i.name_sw ?? i.name, 80)?.replace(/\s+/g, ' ');
+      const en = str(i.name_en ?? i.name, 80)?.replace(/\s+/g, ' ');
+      if (!sw && !en) continue;
+      const name_sw = sw || en;
+      const name_en = en || sw;
+      const key = normalizeQuery(name_en);
+      if (!key || seenNames.has(key)) continue;
+      seenNames.add(key);
+      others.push({ name: name_en, name_sw, name_en, ...withDefaults(i) });
     }
     if (!jobs.length && !others.length) return bad(res, 'Choose your services');
     if (jobs.length + others.length > MAX_SERVICES) return bad(res, 'Too many services');
     if (![...jobs, ...others].every((j) => EXPERIENCE.includes(j.experience) && AVAILABILITY.includes(j.availability))) return bad(res);
 
-    const rows = jobs.length ? await db('services').whereIn('slug', jobs.map((j) => j.key)).where({ active: true }).select('id', 'slug') : [];
+    const rows = jobs.length ? await db('services').whereIn('slug', jobs.map((j) => j.key)).where({ active: true, status: 'approved' }).select('id', 'slug') : [];
     if (rows.length !== jobs.length) return bad(res, 'Unknown service');
 
     await db.transaction(async (trx) => {
@@ -87,59 +86,31 @@ router.put('/', async (req, res, next) => {
         );
       }
 
-      // Jobs typed by hand wait for an admin. A name already in the list is simply added to the jobs.
+      // A job typed by hand exists at once as a pending job, so the worker can use it. The admin approves,
+      // merges or rejects it later. A name already in the list is simply linked. A job the admin rejected is not sent again.
+      const mine = await trx('service_suggestions').where({ provider_id: p.id });
+      const rejected = new Set(mine.filter((r) => r.status === 'rejected').map((r) => normalizeQuery(r.name_en || r.name)));
       await trx('service_suggestions').where({ provider_id: p.id, status: 'pending' }).del();
+      // A rejected job the worker removed from his list is forgotten (he sees it until he removes it)
+      const kept = new Set(others.map((o) => normalizeQuery(o.name_en)));
+      const dropped = mine.filter((r) => r.status === 'rejected' && !kept.has(normalizeQuery(r.name_en || r.name))).map((r) => r.id);
+      if (dropped.length) await trx('service_suggestions').whereIn('id', dropped).del();
       for (const o of others) {
-        const match = await trx('services')
-          .where({ active: true })
-          .whereRaw('(lower(name_sw) = ? or lower(name_en) = ?)', [o.name.toLowerCase(), o.name.toLowerCase()])
-          .first('id');
-        if (match) {
-          await trx('provider_services')
-            .insert({ provider_id: p.id, service_id: match.id, experience: o.experience, availability: o.availability })
-            .onConflict(['provider_id', 'service_id'])
-            .ignore();
-        } else {
-          const old = await trx('service_suggestions').where({ provider_id: p.id }).whereRaw('lower(name) = ?', [o.name.toLowerCase()]).first('id');
-          if (old) await trx('service_suggestions').where({ id: old.id }).update({ experience: o.experience, availability: o.availability, status: 'pending' });
-          else await trx('service_suggestions').insert({ provider_id: p.id, name: o.name, experience: o.experience, availability: o.availability });
+        if (rejected.has(normalizeQuery(o.name_en))) continue;
+        const { service } = await findOrCreateJob(trx, o);
+        await trx('provider_services')
+          .insert({ provider_id: p.id, service_id: service.id, experience: o.experience, availability: o.availability })
+          .onConflict(['provider_id', 'service_id'])
+          .ignore();
+        if (service.status === 'pending') {
+          const note = { name: o.name_en, name_sw: o.name_sw, name_en: o.name_en, experience: o.experience, availability: o.availability, status: 'pending', service_id: service.id };
+          const old = await trx('service_suggestions').where({ provider_id: p.id }).whereRaw('lower(name) = ?', [o.name_en.toLowerCase()]).first('id');
+          if (old) await trx('service_suggestions').where({ id: old.id }).update(note);
+          else await trx('service_suggestions').insert({ provider_id: p.id, ...note });
         }
       }
-    });
-    res.json({ provider: await providerView(req.user.id) });
-  } catch (e) {
-    next(e);
-  }
-});
-
-// Save one photo: re-encoded as JPEG (removes hidden data), random private name
-async function savePhoto(buf) {
-  await fs.promises.mkdir(NIDA_DIR, { recursive: true });
-  const name = `${crypto.randomBytes(16).toString('hex')}.jpg`;
-  await sharp(buf).rotate().resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toFile(path.join(NIDA_DIR, name));
-  return name;
-}
-
-// NIDA number + selfie + ID photo. Goes to "pending": an admin (or the NIDA service) decides.
-router.post('/nida', upload.fields([{ name: 'selfie', maxCount: 1 }, { name: 'id_photo', maxCount: 1 }]), async (req, res, next) => {
-  try {
-    const number = req.body?.nida_number;
-    const selfie = req.files?.selfie?.[0];
-    const idPhoto = req.files?.id_photo?.[0];
-    if (!/^\d{20}$/.test(number || '') || !selfie || !idPhoto) return bad(res, 'NIDA number, selfie and ID photo are required');
-
-    const p = await db('provider_profiles').where({ user_id: req.user.id }).first();
-    if (!p) return bad(res, 'Save your details first');
-    const hash = secret.hash(number);
-    const taken = await db('provider_profiles').where({ nida_hash: hash }).whereNot({ id: p.id }).first('id');
-    if (taken) return res.status(409).json({ error: 'NIDA already used', code: 'NIDA_TAKEN' });
-
-    const selfiePath = await savePhoto(selfie.buffer);
-    const idPath = await savePhoto(idPhoto.buffer);
-    await db('provider_profiles').where({ id: p.id }).update({
-      nida_submitted: true, nida_enc: secret.encrypt(number), nida_hash: hash,
-      nida_selfie_path: selfiePath, nida_id_path: idPath,
-      verification_status: p.verification_status === 'verified' ? 'verified' : 'pending', rejection_reason: null,
+      // Pending jobs that no worker offers any more are switched off, so customers stop finding them
+      await trx.raw("update services s set active = false where s.status = 'pending' and not exists (select 1 from provider_services ps where ps.service_id = s.id)");
     });
     res.json({ provider: await providerView(req.user.id) });
   } catch (e) {

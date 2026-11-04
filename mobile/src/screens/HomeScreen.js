@@ -24,7 +24,7 @@ import {
   ServiceCards,
   ServiceList,
 } from '../components/home/SearchParts';
-import { availability } from '../api/services';
+import { availability, reportMiss } from '../api/services';
 import { useAuth } from '../context/AuthContext';
 import { searchPlaces, reversePlace } from '../api/places';
 import { useRequest } from '../context/RequestContext';
@@ -42,7 +42,7 @@ const COLLAPSED_HEIGHT = 112; // handle + search bar
 export default function HomeScreen({ active = true }) {
   const { colors, t, isDark } = useSettings();
   const { token } = useAuth();
-  const { services } = useServices();
+  const { services, allServices } = useServices();
   const { request, create, cancel, dismiss } = useRequest();
   const insets = useSafeAreaInsets();
   const loc = useUserLocation();
@@ -71,7 +71,7 @@ export default function HomeScreen({ active = true }) {
   const mapPadding = snap === 'collapsed' ? visible.collapsed : visible.half;
 
   // The open request decides what the map and the sheet show
-  const tripService = request ? services.find((s) => s.id === request.service.id) || null : null;
+  const tripService = request ? allServices.find((s) => s.id === request.service.id) || null : null;
   const mapProviders = useMemo(
     () => (request || !service || !avail ? [] : avail.pins.map((p) => ({ ...p, slug: service.key }))),
     [request, service, avail]
@@ -218,10 +218,10 @@ export default function HomeScreen({ active = true }) {
 
   // After "no fundi" or a cancel: close the trip and go back to the same service
   const retry = useCallback(() => {
-    const svc = request ? services.find((s) => s.id === request.service.id) : null;
+    const svc = request ? allServices.find((s) => s.id === request.service.id) : null;
     dismiss();
     if (svc) pickService(svc);
-  }, [request, services, dismiss, pickService]);
+  }, [request, allServices, dismiss, pickService]);
 
   const recenter = async () => {
     const c = (await loc.locate()) || loc.coords || DEFAULT_LOCATION;
@@ -246,8 +246,24 @@ export default function HomeScreen({ active = true }) {
   }, [active]);
 
   // ----- sheet content -----
-  const matches = matchServices(services, query);
+  const matches = matchServices(allServices, query);
   const searching = query.trim().length > 0;
+
+  // Nothing matches what the customer typed: after a short pause tell the server (once per word),
+  // so the admin sees which jobs people ask for that we do not have yet.
+  const missSent = useRef('');
+  const noMatch = searching && matches.length === 0;
+  useEffect(() => {
+    const q = query.trim();
+    if (mode !== 'search' || !noMatch || q.length < 3 || services.length === 0) return;
+    const key = q.toLowerCase();
+    const timer = setTimeout(() => {
+      if (missSent.current === key) return;
+      missSent.current = key;
+      reportMiss(token, q, loc.coords).catch(() => {}); // never bothers the customer
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [query, mode, noMatch, services.length, token, loc.coords]);
 
   const header = (() => {
     if (request) return null;
@@ -282,6 +298,7 @@ export default function HomeScreen({ active = true }) {
       return (
         <>
           <Text style={[styles.empty, { color: colors.textMuted }]}>{t('noServiceMatch')}</Text>
+          {query.trim().length >= 3 && <Text style={[styles.emptyNote, { color: colors.textMuted }]}>{t('missNoted')}</Text>}
           <ServiceList title={t('servicesAvailable')} services={services} onPick={pickService} />
         </>
       );
@@ -389,6 +406,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   header: { paddingBottom: 4 },
   empty: { fontSize: 15, textAlign: 'center', marginTop: 24 },
+  emptyNote: { fontSize: 13, textAlign: 'center', marginTop: 6, marginBottom: 8 },
   locate: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
   banner: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 14, elevation: 4 },
   bannerText: { flex: 1, fontSize: 14 },

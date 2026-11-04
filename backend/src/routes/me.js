@@ -27,6 +27,18 @@ const fail = (res, status, code, error) => res.status(status).json({ error, code
 const validPassword = (p) => typeof p === 'string' && p.length >= MIN_PASSWORD && p.length <= MAX_PASSWORD;
 const loadUser = (id) => db('users').where({ id }).first();
 
+// Agree to the current Terms and Conditions (the app asks after a login when terms_ok is false)
+router.post('/terms', async (req, res, next) => {
+  try {
+    const terms = require('../lib/terms');
+    if (req.body?.version !== terms.VERSION) return fail(res, 400, 'TERMS_CHANGED', 'The terms changed. Read them again.');
+    await db('users').where({ id: req.user.id }).update({ terms_version: terms.VERSION, terms_accepted_at: db.fn.now() });
+    res.json({ user: publicUser(await loadUser(req.user.id)) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // The phone's push token (called by the apps after login)
 router.put('/push-token', async (req, res, next) => {
   try {
@@ -129,7 +141,7 @@ router.delete('/avatar', async (req, res, next) => {
 // Settings synced across devices
 router.patch('/settings', async (req, res, next) => {
   try {
-    const { language, theme_mode, notifications_enabled } = req.body || {};
+    const { language, theme_mode, notifications_enabled, whatsapp_opt_in } = req.body || {};
     const changes = {};
 
     if (language !== undefined) {
@@ -143,6 +155,10 @@ router.patch('/settings', async (req, res, next) => {
     if (notifications_enabled !== undefined) {
       if (typeof notifications_enabled !== 'boolean') return fail(res, 400, 'VALIDATION', 'Invalid value');
       changes.notifications_enabled = notifications_enabled;
+    }
+    if (whatsapp_opt_in !== undefined) {
+      if (typeof whatsapp_opt_in !== 'boolean') return fail(res, 400, 'VALIDATION', 'Invalid value');
+      changes.whatsapp_opt_in = whatsapp_opt_in;
     }
     if (!Object.keys(changes).length) return fail(res, 400, 'VALIDATION', 'Nothing to update');
 

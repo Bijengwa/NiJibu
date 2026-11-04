@@ -1,17 +1,5 @@
-// The list of services comes from the server (ids and names). This file only adds what the
-// server does not know: the words people may type (Swahili + English).
-const META = {
-  dobi: { keywords: ['dobi', 'laundry', 'kufua', 'nguo', 'washing', 'pasi', 'iron', 'kufulia'] },
-  'fundi-bomba': { keywords: ['bomba', 'fundi bomba', 'plumber', 'plumbing', 'maji', 'water', 'pipe', 'mabomba', 'tap', 'leak', 'choo'] },
-  'fundi-umeme': { keywords: ['umeme', 'fundi umeme', 'electrician', 'electric', 'taa', 'waya', 'wiring', 'socket', 'swichi', 'tanesco'] },
-  'fundi-viatu': { keywords: ['viatu', 'fundi viatu', 'shoe', 'shoes', 'cobbler', 'kushona viatu', 'sandals', 'sandali'] },
-  'fundi-seremala': { keywords: ['seremala', 'fundi seremala', 'carpenter', 'mbao', 'wood', 'furniture', 'samani', 'mlango', 'door', 'kitanda'] },
-  'fundi-rangi': { keywords: ['rangi', 'fundi rangi', 'painter', 'paint', 'kupaka', 'ukuta', 'wall'] },
-  'fundi-simu': { keywords: ['simu', 'fundi simu', 'phone', 'phone repair', 'screen', 'kioo', 'betri', 'battery'] },
-  'fundi-friji': { keywords: ['friji', 'fridge', 'tv', 'televisheni', 'television', 'jokofu', 'freezer', 'microwave'] },
-  usafi: { keywords: ['usafi', 'cleaning', 'clean', 'kusafisha', 'nyumba', 'house', 'mopping', 'kudeki'] },
-  'fundi-magari': { keywords: ['gari', 'magari', 'fundi magari', 'mechanic', 'car', 'garage', 'engine', 'injini'] },
-};
+// Everything about the services (ids, names, and the other words people type for them) comes from the
+// server: nothing is hard-coded here. The admin changes the words in the admin web app.
 
 // Searches saved by an older version of the app used these keys
 const LEGACY = { bomba: 'fundi-bomba', viatu: 'fundi-viatu' };
@@ -20,10 +8,11 @@ const LEGACY = { bomba: 'fundi-bomba', viatu: 'fundi-viatu' };
 export function buildServices(rows, lang) {
   return rows.map((r) => ({
     id: r.id,
+    status: r.status,
     key: r.slug,
     label: lang === 'sw' ? r.name_sw : r.name_en,
     sub: lang === 'sw' ? r.name_en : r.name_sw,
-    keywords: [r.name_sw, r.name_en, ...(META[r.slug]?.keywords ?? [])],
+    keywords: [r.name_sw, r.name_en, ...(r.aliases ?? [])], // aliases: the other words for this job, from the database
   }));
 }
 

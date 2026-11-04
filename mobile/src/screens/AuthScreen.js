@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Field from '../components/Field';
 import { EyeIcon, EyeOffIcon, LockIcon, PhoneIcon } from '../components/Icons';
 import SettingsBar from '../components/SettingsBar';
+import TermsCheck from '../components/TermsCheck';
 import { errorMessage } from '../utils/errors';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -21,7 +22,7 @@ import {
   validatePhone,
 } from '../utils/validation';
 
-export default function AuthScreen() {
+export default function AuthScreen({ onForgot }) {
   const { colors, t } = useSettings();
   const { login, register } = useAuth();
   const insets = useSafeAreaInsets();
@@ -33,6 +34,7 @@ export default function AuthScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState({}); // values are translation keys
   const [loading, setLoading] = useState(false);
+  const [agreed, setAgreed] = useState(false);
 
   const passwordRef = useRef(null);
   const confirmRef = useRef(null);
@@ -50,13 +52,14 @@ export default function AuthScreen() {
       phone: validatePhone(phone),
       password: validatePassword(password),
       confirm: isRegister ? validateConfirm(password, confirm) : '',
+      terms: isRegister && !agreed ? 'termsRequired' : '',
     };
     setErrors(next);
-    if (next.phone || next.password || next.confirm) return;
+    if (next.phone || next.password || next.confirm || next.terms) return;
 
     setLoading(true);
     try {
-      await (isRegister ? register(phone, password) : login(phone, password));
+      await (isRegister ? register(phone, password, agreed) : login(phone, password));
       // On success AuthContext updates and App shows the home screen.
     } catch (e) {
       setErrors({ form: e.code || 'UNKNOWN' });
@@ -157,6 +160,16 @@ export default function AuthScreen() {
               onSubmitEditing={submit}
               error={errors.confirm ? t(errors.confirm) : ''}
             />
+          )}
+
+          {isRegister && (
+            <TermsCheck checked={agreed} onChange={(x) => { setAgreed(x); setErrors((e) => ({ ...e, terms: '' })); }} error={errors.terms} />
+          )}
+
+          {!isRegister && !!onForgot && (
+            <Pressable onPress={onForgot} hitSlop={10} accessibilityRole="button" style={{ alignSelf: 'flex-end', marginTop: 2 }}>
+              <Text style={[styles.link, { color: colors.primary }]}>{t('forgotLink')}</Text>
+            </Pressable>
           )}
 
           {!!errors.form && (

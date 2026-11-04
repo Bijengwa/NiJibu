@@ -9,9 +9,11 @@ const realtime = require('../lib/realtime');
 const { notify } = require('./notify');
 const dispatch = require('./dispatch');
 const payments = require('./payments');
+const { outcomeOf } = require('../lib/outcome');
+const route = require('../lib/route');
+const cancelReasons = require('../lib/cancelReasons');
 
 const ARRIVE_MAX_KM = Number(process.env.ARRIVE_MAX_KM ?? 0.5); // 0 = do not check (dev only)
-const AVG_SPEED_KMH = 20; // rough city speed for the ETA until real routing is added
 
 // stage name in the URL -> change
 const STAGES = {
@@ -60,11 +62,28 @@ async function createRequest(user, { service_id, lat, lng, address, note }) {
   return request.id;
 }
 
+// Two fundis accepting together can make Postgres cancel one of them (deadlock, code 40P01). The cancelled one
+// simply tries again and then gets the normal answer (409 ALREADY_TAKEN) instead of an error 500.
 async function acceptOffer(user, offerId) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await acceptOfferOnce(user, offerId);
+    } catch (err) {
+      if (err.code !== '40P01' || attempt >= 3) throw err;
+    }
+  }
+}
+
+async function acceptOfferOnce(user, offerId) {
   const closedUsers = [];
   let requestId;
 
   await db.transaction(async (trx) => {
+    // Lock the request first, then the offer. Two fundis accepting at the same moment now wait for
+    // each other here instead of locking their own offers first and deadlocking (the loser gets 409).
+    const pre = await trx('request_offers').where({ id: offerId }).first('request_id');
+    if (pre) await trx('requests').where({ id: pre.request_id }).forUpdate().first('id');
+
     const offer = await trx('request_offers as o')
       .join('provider_profiles as p', 'p.id', 'o.provider_id')
       .where('o.id', offerId)
@@ -82,18 +101,17 @@ async function acceptOffer(user, offerId) {
     }
     requestId = offer.request_id;
 
+    // A worker can hold more than one job, up to MAX_ACTIVE_JOBS. The profile row is locked so two
+    // accepts made at the same moment cannot go over the limit.
+    await trx('provider_profiles').where({ id: offer.provider_id }).forUpdate().first('id');
+    const [{ n: holding }] = await trx('requests').where({ provider_id: offer.provider_id }).whereIn('status', dispatch.ACTIVE_JOB).count({ n: '*' });
+    if (Number(holding) >= dispatch.MAX_ACTIVE_JOBS) throw new HttpError(409, 'PROVIDER_BUSY', 'You have too many jobs. Finish one first');
+
     // The one guarded update: only the first provider to get here wins
-    let won;
-    try {
-      [won] = await trx('requests')
-        .where({ id: offer.request_id, status: 'searching' })
-        .update({ provider_id: offer.provider_id, status: 'accepted', accepted_at: db.fn.now() })
-        .returning('id');
-    } catch (err) {
-      // unique index: this provider already has a job in progress
-      if (err.code === '23505') throw new HttpError(409, 'PROVIDER_BUSY', 'Finish your current job first');
-      throw err;
-    }
+    const [won] = await trx('requests')
+      .where({ id: offer.request_id, status: 'searching' })
+      .update({ provider_id: offer.provider_id, status: 'accepted', accepted_at: db.fn.now() })
+      .returning('id');
     if (!won) throw new HttpError(409, 'ALREADY_TAKEN', 'Someone else took this job');
 
     await trx('request_offers').where({ id: offer.id }).update({ status: 'accepted' });
@@ -147,8 +165,11 @@ async function moveStage(user, requestId, stageName, body = {}) {
   // The fundi sets the price BEFORE the work starts. When the work is done the customer confirms it and pays in the app.
   const change = { status: stage.to, [stage.at]: db.fn.now() };
   if (stageName === 'start') {
-    if (!payments.validPrice(body.price)) throw new HttpError(400, 'PRICE_REQUIRED', 'Enter the price of the job');
-    change.agreed_price = body.price;
+    if (!Number.isInteger(body.price) || body.price > payments.MAX_PRICE) throw new HttpError(400, 'PRICE_REQUIRED', 'Enter the price of the job');
+    if (body.price < payments.MIN_PRICE) throw new HttpError(400, 'PRICE_TOO_LOW', `The lowest price of a job is TZS ${payments.MIN_PRICE}`);
+    // Save what should be paid for this job: price, NiJibu's commission and the fundi's share
+    const money = payments.split(body.price);
+    Object.assign(change, { agreed_price: body.price, fee_percent: money.fee_percent, fee_due: money.fee, payout_due: money.payout });
   }
 
   const changed = await db('requests')
@@ -181,7 +202,7 @@ async function confirmWork(user, requestId) {
 }
 
 // Customer or provider cancels before the work starts.
-async function cancelRequest(user, requestId, reason) {
+async function cancelRequest(user, requestId, reasonBody) {
   const r = await db('requests as r')
     .leftJoin('provider_profiles as p', 'p.id', 'r.provider_id')
     .where('r.id', requestId)
@@ -193,13 +214,23 @@ async function cancelRequest(user, requestId, reason) {
   if (!asCustomer && !asProvider) throw new HttpError(404, 'NOT_FOUND', 'Request not found');
 
   const allowed = asCustomer ? ['searching', 'accepted', 'on_the_way', 'arrived'] : ['accepted', 'on_the_way', 'arrived'];
+
+  // When a worker is already involved the reason is required (the admin reads it). Cancelling while we are
+  // still searching needs no reason: nobody else is affected.
+  const role = asCustomer ? 'customer' : 'worker';
+  const given = typeof reasonBody === 'string' ? { reason: reasonBody } : reasonBody;
+  const why = cancelReasons.read(role, given);
+  if (why?.bad || (!why && r.status !== 'searching')) throw new HttpError(400, 'REASON_REQUIRED', 'Choose the reason for cancelling');
+
   const changed = await db('requests').where({ id: r.id }).whereIn('status', allowed).update({
     status: 'cancelled',
     cancelled_by: asCustomer ? 'customer' : 'provider',
-    cancel_reason: reason ? String(reason).slice(0, 200) : null,
+    cancel_code: why ? why.code : null,
+    cancel_reason: why ? why.text : null,
     cancelled_at: db.fn.now(),
   });
   if (!changed) throw new HttpError(409, 'BAD_STATE', 'This request can no longer be cancelled');
+  const hadWorker = !!r.provider_id;
 
   // Close offers that are still waiting
   const open = await db('request_offers as o')
@@ -213,7 +244,15 @@ async function cancelRequest(user, requestId, reason) {
 
   const other = asCustomer ? r.provider_user_id : r.customer_id;
   if (other) {
-    await notify(other, 'request_cancelled', 'Request cancelled', asCustomer ? 'The customer cancelled the request.' : 'The provider cancelled. You can request again.');
+    const base = asCustomer ? 'The customer cancelled the request.' : 'The provider cancelled. You can request again.';
+    await notify(other, 'request_cancelled', 'Request cancelled', why ? `${base} Reason: ${why.text}` : base);
+  }
+  // A job that failed after a worker was involved goes to the admin with its reason
+  if (hadWorker) {
+    const admins = await db('users').where({ role: 'admin' }).pluck('id');
+    for (const id of admins) {
+      await notify(id, 'job_failed', 'A job failed', `${r.code || `Request ${r.id}`}: ${asCustomer ? 'customer' : 'worker'} cancelled. ${why ? why.text : ''}`.trim(), { request_id: r.id, code: why?.code || null });
+    }
   }
   await dispatch.publishStatus(r.id);
 }
@@ -231,7 +270,7 @@ async function loadView(user, requestId) {
       'r.*',
       's.slug', 's.name_sw', 's.name_en',
       'cu.name as c_name', 'cu.phone as c_phone', 'cu.avatar_path as c_avatar',
-      'p.user_id as p_user_id', 'p.lat as p_lat', 'p.lng as p_lng',
+      'p.user_id as p_user_id', 'p.lat as p_lat', 'p.lng as p_lng', 'p.vehicle as p_vehicle',
       'pu.name as p_name', 'pu.phone as p_phone', 'pu.avatar_path as p_avatar'
     );
   if (!r) return null;
@@ -240,8 +279,15 @@ async function loadView(user, requestId) {
   const isProvider = r.p_user_id === user.id;
   if (!isCustomer && !isProvider) return null;
 
+  // How long until the worker arrives, and the road to follow (only while the worker is coming)
+  const coming = ['accepted', 'on_the_way'].includes(r.status) && r.p_lat != null;
+  const trip = coming ? await route.trip({ lat: r.p_lat, lng: r.p_lng }, { lat: r.lat, lng: r.lng }, r.p_vehicle) : null;
+
   const base = {
+    now: new Date().toISOString(), // the server clock: the apps use it to count waiting time even if the phone clock is wrong
+    trip,
     id: r.id,
+    code: r.code,
     status: r.status,
     service: { id: r.service_id, slug: r.slug, name_sw: r.name_sw, name_en: r.name_en },
     lat: r.lat,
@@ -271,18 +317,22 @@ async function loadView(user, requestId) {
         avatar_url: avatarUrl({ avatar_path: r.p_avatar }),
         lat: live ? r.p_lat : null,
         lng: live ? r.p_lng : null,
-        eta_min: live ? Math.max(1, Math.round((distanceKm(r.lat, r.lng, r.p_lat, r.p_lng) / AVG_SPEED_KMH) * 60)) : null,
+        vehicle: route.vehicleOf(r.p_vehicle),
+        eta_min: live && trip ? trip.eta_min : null,
       };
     }
-    return { ...base, role: 'customer', provider, payment: await payments.paymentView(r.id, 'customer') };
+    const payment = await payments.paymentView(r.id, 'customer');
+    return { ...base, ...outcomeOf({ ...r, payment_status: payment?.status }), role: 'customer', provider, payment };
   }
 
   // Provider side: customer details only while the job is yours and active
   const active = ['accepted', 'on_the_way', 'arrived', 'in_progress'].includes(r.status);
+  const payment = await payments.paymentView(r.id, 'provider');
   return {
     ...base,
+    ...outcomeOf({ ...r, payment_status: payment?.status }),
     role: 'provider',
-    payment: await payments.paymentView(r.id, 'provider'),
+    payment,
     customer: active || r.status === 'completed'
       ? { name: r.c_name, phone: r.c_phone, avatar_url: avatarUrl({ avatar_path: r.c_avatar }) }
       : null,

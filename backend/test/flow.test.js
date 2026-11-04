@@ -254,12 +254,13 @@ test('full job: offers go to the nearest 3, one wins, live tracking, all stages'
   assert.equal((await api(winner, 'POST', `/api/provider/payments/${rid}/complaint`, { note: 'Money did not reach my phone' })).body.code, 'COMPLAINT_OPEN');
   const admin2 = await makeUser('boss2', '255799900061');
   await db('users').where({ id: admin2.id }).update({ role: 'admin' });
-  const open = (await api(admin2, 'GET', '/api/admin/complaints')).body.items;
+  const open = (await api(admin2, 'GET', '/api/admin/complaints?status=active')).body.items;
   assert.equal(open.length, 1);
-  assert.equal(open[0].complaint, 'Money did not reach my phone');
+  assert.equal(open[0].message, 'Money did not reach my phone');
+  assert.equal(open[0].reason, 'payment_not_received');
   assert.equal((await api(winner, 'GET', '/api/admin/complaints')).status, 403);
-  assert.equal((await api(admin2, 'POST', `/api/admin/complaints/${open[0].payout_id}/resolve`, { note: 'Sent again' })).status, 200);
-  assert.equal((await api(admin2, 'GET', '/api/admin/complaints')).body.items.length, 0);
+  assert.equal((await api(admin2, 'POST', `/api/admin/complaints/${open[0].id}`, { status: 'resolved', reply: 'Sent again' })).status, 200);
+  assert.equal((await api(admin2, 'GET', '/api/admin/complaints?status=active')).body.items.length, 0);
   assert.equal((await api(winner, 'GET', `/api/requests/${rid}`)).body.request.payment.complaint_status, 'resolved');
   assert.equal((await api(winner, 'POST', `/api/provider/payments/${rid}/received`)).status, 200);
   assert.ok((await api(winner, 'GET', `/api/requests/${rid}`)).body.request.payment.received_at);

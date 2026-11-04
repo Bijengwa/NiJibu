@@ -16,6 +16,8 @@ const MAX_TRIES = 2; // a fundi who did not answer (offer ran out) is asked once
 const MAX_SEARCH_MS = 5 * 60 * 1000; // give up after 5 minutes
 const WAIT_FOR_ANYONE_MS = 2 * 60 * 1000; // when nobody at all is found, keep looking this long (a fundi may go online)
 const ACTIVE_JOB = ['accepted', 'on_the_way', 'arrived', 'in_progress'];
+// A worker can hold more than one job (many people also have side jobs), up to this number
+const MAX_ACTIVE_JOBS = Number(process.env.MAX_ACTIVE_JOBS ?? 3);
 
 // Verified providers who are online, offer the service, are free, and are inside the radius.
 // Nearest first. `q` can be db or a transaction.
@@ -30,10 +32,8 @@ async function findCandidates(q, { serviceId, lat, lng, radiusKm, customerId, ex
     .whereBetween('p.lng', [box.minLng, box.maxLng])
     .whereNot('p.user_id', customerId ?? 0) // you cannot be your own provider
     .whereNotIn('p.id', excludeIds)
-    .whereNotExists(function () {
-      this.select(q.raw('1')).from('requests as r').whereRaw('r.provider_id = p.id').whereIn('r.status', ACTIVE_JOB);
-    })
-    .select('p.id', 'p.user_id', 'p.lat', 'p.lng');
+    .whereRaw(`(select count(*) from requests r where r.provider_id = p.id and r.status in (${ACTIVE_JOB.map(() => '?').join(',')})) < ?`, [...ACTIVE_JOB, MAX_ACTIVE_JOBS])
+    .select('p.id', 'p.user_id', 'p.lat', 'p.lng', 'p.vehicle');
 
   return rows
     .map((p) => ({ ...p, distance_km: distanceKm(lat, lng, p.lat, p.lng) }))
@@ -62,6 +62,7 @@ async function publishStatus(requestId) {
     .where('requests.id', requestId)
     .first('requests.status', 'requests.customer_id', 'p.user_id as provider_user_id');
   if (!r) return;
+  require('../lib/adminEvents').notify(); // admin portals refresh
   const payload = { request_id: requestId, status: r.status, at: new Date().toISOString() };
   realtime.emitToUser(r.customer_id, 'request:status', payload);
   if (r.provider_user_id) realtime.emitToUser(r.provider_user_id, 'request:status', payload);
@@ -185,10 +186,11 @@ async function expireOffers() {
 // Runs every few seconds from server.js
 async function tick() {
   // Providers who stopped sending signals go offline
-  await db('provider_profiles')
+  const wentOffline = await db('provider_profiles')
     .where({ is_online: true })
     .where('last_seen', '<', new Date(Date.now() - FRESH_MS))
     .update({ is_online: false });
+  if (wentOffline) require('../lib/adminEvents').notify();
 
   await expireOffers();
 
@@ -202,4 +204,4 @@ async function tick() {
   }
 }
 
-module.exports = { findCandidates, advance, tick, publishStatus, expireOffers, offerView, RADII_KM, ACTIVE_JOB };
+module.exports = { findCandidates, advance, tick, publishStatus, expireOffers, offerView, RADII_KM, ACTIVE_JOB, MAX_ACTIVE_JOBS };
